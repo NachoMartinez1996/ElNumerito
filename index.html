@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a1a" />
+  <meta name="description" content="Numeritos - El clásico juego de lógica y deducción. Desafiá a un amigo en tiempo real." />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Numeritos</title>
+</head>
+<body>
+  <!-- Pantalla de Lobby -->
+  <main id="pantalla-lobby" class="pantalla activa">
+    <div class="logo-container">
+      <h1 class="logo">Numeritos</h1>
+      <p class="subtitulo">El clásico de lógica y deducción</p>
+    </div>
+    <div class="card">
+      <div class="tabs">
+        <button id="tab-crear" class="tab active">Crear Sala</button>
+        <button id="tab-unirse" class="tab">Unirse</button>
+      </div>
+      <div id="form-crear" class="form-panel">
+        <input type="text" id="nombre-crear" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
+        <button id="btn-crear" class="btn-primary">Crear Sala Nueva</button>
+      </div>
+      <div id="form-unirse" class="form-panel oculto">
+        <input type="text" id="nombre-unirse" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
+        <input type="text" id="codigo-sala" placeholder="Código de sala" maxlength="6" autocomplete="off" style="text-transform:uppercase; letter-spacing:0.3em;" />
+        <button id="btn-unirse" class="btn-primary">Unirse a Sala</button>
+      </div>
+      <p id="error-lobby" class="error-msg"></p>
+    </div>
+    <p class="info-pie">Compartí el código con un amigo y jugá en tiempo real.</p>
+  </main>
+
+  <!-- Pantalla de Configuración (número secreto) -->
+  <main id="pantalla-config" class="pantalla">
+    <div class="top-bar">
+      <span class="sala-badge">Sala: <strong id="sala-id-config"></strong></span>
+      <span id="estado-sala-config" class="estado-badge">Esperando oponente...</span>
+    </div>
+    <div class="card">
+      <h2>🔒 Tu número secreto</h2>
+      <p class="instruccion">Elegí 4 dígitos <strong>sin repetir</strong>. Tu oponente intentará adivinarlo.</p>
+      <div class="digitos-inputs" id="secreto-inputs">
+        <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+        <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+        <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+        <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+      </div>
+      <p id="error-secreto" class="error-msg"></p>
+      <button id="btn-confirmar-secreto" class="btn-primary">Confirmar número</button>
+    </div>
+  </main>
+
+  <!-- Pantalla de Juego -->
+  <main id="pantalla-juego" class="pantalla">
+    <div class="top-bar">
+      <span class="sala-badge">Sala: <strong id="sala-id-juego"></strong></span>
+      <span id="ronda-badge" class="ronda-badge">Ronda 1</span>
+    </div>
+    <div id="indicador-turno" class="turno-indicador">
+      <span id="turno-texto"></span>
+      <span id="turno-icono"></span>
+    </div>
+    <div class="juego-layout">
+      <!-- Tu lado -->
+      <section class="jugador-panel" id="panel-propio">
+        <h3>😎 Tus intentos</h3>
+        <div class="historial" id="historial-propio">
+          <div class="historial-header"><span>#</span><span>Número</span><span class="b">B</span><span class="r">R</span></div>
+          <div id="lista-propia"></div>
+        </div>
+        <div class="input-intento" id="input-intento-container">
+          <p class="turno-aviso" id="aviso-turno-propio"></p>
+          <div class="digitos-inputs" id="intento-inputs">
+            <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+            <input type="number" min="0" max="9" class="digito-input" maxlength="1" inputmode="numeric" pattern="[0-9]" />
+          </div>
+          <p id="error-intento" class="error-msg"></p>
+          <button id="btn-enviar-intento" class="btn-primary">Enviar intento</button>
+        </div>
+      </section>
+      <!-- Lado del oponente -->
+      <section class="jugador-panel" id="panel-oponente">
+        <h3 id="nombre-oponente">🤔 Oponente</h3>
+        <div class="historial" id="historial-oponente">
+          <div class="historial-header"><span>#</span><span>Número</span><span class="b">B</span><span class="r">R</span></div>
+          <div id="lista-oponente"></div>
+        </div>
+        <p class="pensando-msg" id="pensando-oponente"></p>
+      </section>
+    </div>
+  </main>
+
+  <!-- Overlay de Última Chance -->
+  <div id="overlay-ultima-chance" class="overlay oculto">
+    <div class="overlay-card">
+      <h2 id="ultima-chance-titulo">⚠️ ¡Última chance!</h2>
+      <p id="ultima-chance-texto"></p>
+      <button id="btn-cerrar-overlay" class="btn-primary">¡Entendido!</button>
+    </div>
+  </div>
+
+  <!-- Overlay de Resultado Final -->
+  <div id="overlay-resultado" class="overlay oculto">
+    <div class="overlay-card resultado-card">
+      <h2 id="resultado-titulo"></h2>
+      <p id="resultado-detalle"></p>
+      <p id="resultado-secretos"></p>
+      <button id="btn-revancha" class="btn-primary">🔄 Revancha</button>
+      <button id="btn-salir" class="btn-secondary">Salir</button>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

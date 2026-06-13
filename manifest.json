@@ -1,0 +1,25 @@
+{
+  "name": "Numeritos",
+  "short_name": "Numeritos",
+  "description": "El clásico juego de lógica y deducción. Adiviná el número de 4 cifras de tu oponente.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a1a",
+  "theme_color": "#0a0a1a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "lang": "es-AR"
+}
