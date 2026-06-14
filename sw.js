@@ -1,10 +1,15 @@
-const CACHE_NAME = 'numeritos-v1';
+const CACHE_NAME = 'numeritos-v2';
 const ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
   './manifest.json',
-  './favicon.png'
+  './android-chrome-192x192.png',
+  './android-chrome-512x512.png',
+  './apple-touch-icon.png',
+  './favicon.ico',
+  './favicon-16x16.png',
+  './favicon-32x32.png'
 ];
 
 self.addEventListener('install', (event) => {
