@@ -158,12 +158,25 @@ document.getElementById('btn-confirmar-secreto').addEventListener('click', async
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-secreto', error);
 
-  const salaRef = ref(db, `partidas/${miSala}/${miRol}`);
-  await update(salaRef, { secreto: digitos });
+  // Guardar mi secreto
+  const miRef = ref(db, `partidas/${miSala}/${miRol}`);
+  await update(miRef, { secreto: digitos });
   document.getElementById('btn-confirmar-secreto').disabled = true;
   document.getElementById('btn-confirmar-secreto').textContent = '✅ Número guardado';
   document.getElementById('error-secreto').textContent = '';
-  // Si ambos ya tienen secreto, Firebase listener cambiará a 'jugando'
+
+  // Verificar si el oponente ya tiene su secreto guardado
+  const oponenteRol = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
+  const snap = await get(ref(db, `partidas/${miSala}/${oponenteRol}/secreto`));
+  const secretoOponente = snap.val();
+
+  if (secretoOponente) {
+    // Ambos listos, cambiar estado a 'jugando'
+    await update(ref(db, `partidas/${miSala}`), {
+      estado: 'jugando',
+      turno: 'jugador_1'   // siempre empieza el jugador 1
+    });
+  }
 });
 
 // ===== Juego: Enviar intento =====
@@ -349,7 +362,8 @@ function renderizarJuego() {
   if (estado === 'ultima_chance' && turno === miRol) {
     overlayUltimaChance.classList.remove('oculto');
     document.getElementById('ultima-chance-titulo').textContent = '⚠️ ¡Última Chance!';
-    document.getElementById('ultima-chance-texto').textContent = `¡${datosSala[jugadorId === datosSala.jugador_1?.id ? 'jugador_1' : 'jugador_2'] === miRol ? 'Tu oponente' : 'Tu oponente'} descifró tu número! Tenés este único intento para empatar.`;
+const nombreOponente = miRol === 'jugador_1' ? datosSala.jugador_2?.nombre : datosSala.jugador_1?.nombre;
+document.getElementById('ultima-chance-texto').textContent = `¡${nombreOponente || 'Tu oponente'} descifró tu número! Tenés este único intento para empatar.`;
   }
 }
 
