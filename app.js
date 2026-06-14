@@ -22,9 +22,9 @@ let jugadorId = LS.getItem('jugadorId') || generarId();
 LS.setItem('jugadorId', jugadorId);
 
 let miSala = LS.getItem('salaId') || null;
-let miRol = LS.getItem('rol') || null; // 'jugador_1' | 'jugador_2'
+let miRol = LS.getItem('rol') || null;
 let miNombre = LS.getItem('nombre') || '';
-let datosSala = null; // snapshot actual de la sala
+let datosSala = null;
 let listenerSala = null;
 
 // ===== Elementos DOM =====
@@ -58,8 +58,7 @@ function mostrarError(elId, msg) {
 // ===== Validación de 4 dígitos sin repetir =====
 function obtenerDigitosDeInputs(containerId) {
   const inputs = document.querySelectorAll(`#${containerId} .digito-input`);
-  const digitos = Array.from(inputs).map(inp => inp.value.trim()).join('');
-  return digitos;
+  return Array.from(inputs).map(inp => inp.value.trim()).join('');
 }
 function limpiarInputs(containerId) {
   document.querySelectorAll(`#${containerId} .digito-input`).forEach(inp => { inp.value = ''; });
@@ -113,8 +112,8 @@ document.getElementById('btn-crear').addEventListener('click', async () => {
     turno: 'jugador_1',
     ronda: 1,
     ganador: null,
-    jugador_1: { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true },
-    jugador_2: { id: null, nombre: '', secreto: null, intentos: [], conectado: false }
+    jugador_1: { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true, listo: false },
+    jugador_2: { id: null, nombre: '', secreto: null, intentos: [], conectado: false, listo: false }
   });
   iniciarEscuchaSala(salaId);
   mostrarPantalla('config');
@@ -143,7 +142,7 @@ document.getElementById('btn-unirse').addEventListener('click', async () => {
   LS.setItem('salaId', codigo);
 
   await update(salaRef, {
-    'jugador_2': { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true },
+    'jugador_2': { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true, listo: false },
     estado: 'configurando'
   });
   iniciarEscuchaSala(codigo);
@@ -158,30 +157,40 @@ document.getElementById('btn-confirmar-secreto').addEventListener('click', async
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-secreto', error);
 
-  // Guardar mi secreto
   const miRef = ref(db, `partidas/${miSala}/${miRol}`);
-  await update(miRef, { secreto: digitos });
-  document.getElementById('btn-confirmar-secreto').disabled = true;
-  document.getElementById('btn-confirmar-secreto').textContent = '✅ Número guardado';
-  document.getElementById('error-secreto').textContent = '';
+  await update(miRef, { secreto: digitos, listo: false });  // reinicia el listo al confirmar
+  // La interfaz se actualiza con el listener
+});
 
-  // Verificar si el oponente ya tiene su secreto guardado
-  const oponenteRol = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
-  const snap = await get(ref(db, `partidas/${miSala}/${oponenteRol}/secreto`));
-  const secretoOponente = snap.val();
-
-  if (secretoOponente) {
-    // Ambos listos, cambiar estado a 'jugando'
-    await update(ref(db, `partidas/${miSala}`), {
-      estado: 'jugando',
-      turno: 'jugador_1'   // siempre empieza el jugador 1
-    });
+// ===== Botón "Listo" =====
+document.getElementById('btn-listo').addEventListener('click', async () => {
+  await update(ref(db, `partidas/${miSala}/${miRol}`), { listo: true });
+  // Verificar si ambos están listos
+  const snap1 = await get(ref(db, `partidas/${miSala}/jugador_1/listo`));
+  const snap2 = await get(ref(db, `partidas/${miSala}/jugador_2/listo`));
+  if (snap1.val() && snap2.val()) {
+    await update(ref(db, `partidas/${miSala}`), { estado: 'jugando', turno: 'jugador_1' });
   }
 });
 
-// ===== Juego: Enviar intento =====
+// ===== Abandonar sala =====
+document.getElementById('btn-abandonar-config').addEventListener('click', async () => {
+  if (miRol === 'jugador_1') {
+    // El creador borra la sala
+    await set(ref(db, `partidas/${miSala}`), null);
+  } else {
+    // El invitado la deja libre
+    await update(ref(db, `partidas/${miSala}`), {
+      estado: 'esperando',
+      'jugador_2': { id: null, nombre: '', secreto: null, intentos: [], conectado: false, listo: false }
+    });
+  }
+  resetearApp();
+});
+
+// ===== Juego: Enviar intento (sin cambios) =====
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
-  if (!datosSala || datosSala.estado !== 'jugando' || datosSala.turno !== miRol) {
+  if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol) {
     return mostrarError('error-intento', 'No es tu turno.');
   }
   const digitos = obtenerDigitosDeInputs('intento-inputs');
@@ -199,31 +208,23 @@ document.getElementById('btn-enviar-intento').addEventListener('click', async ()
   await set(intentosRef, intentos);
   limpiarInputs('intento-inputs');
 
-  // Si adivinó (4 buenos)
   if (buenos === 4) {
     if (miRol === 'jugador_1') {
-      // Jugador 1 adivinó: dar última chance a jugador 2 si es la misma ronda
       const rondaActual = datosSala.ronda || 1;
       const intentosJ2 = datosSala.jugador_2?.intentos?.length || 0;
       if (intentosJ2 < rondaActual) {
-        // Jugador 2 aún no jugó esta ronda: última chance
         await update(ref(db, `partidas/${miSala}`), { estado: 'ultima_chance', turno: 'jugador_2' });
       } else {
-        // Jugador 2 ya jugó esta ronda: gana jugador 1
         await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'jugador_1' });
       }
     } else {
-      // Jugador 2 adivinó: verificar si fue en última chance o turno normal
       if (datosSala.estado === 'ultima_chance') {
-        // Empate: ambos adivinaron en la misma ronda
         await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'empate' });
       } else {
-        // Jugador 2 adivinó en su turno normal; jugador 1 ya había fallado esta ronda
         await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'jugador_2' });
       }
     }
   } else {
-    // Cambiar turno y posiblemente ronda
     const nuevoTurno = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
     const nuevaRonda = miRol === 'jugador_2' ? (datosSala.ronda || 1) + 1 : (datosSala.ronda || 1);
     await update(ref(db, `partidas/${miSala}`), { turno: nuevoTurno, ronda: nuevaRonda, estado: 'jugando' });
@@ -232,11 +233,10 @@ document.getElementById('btn-enviar-intento').addEventListener('click', async ()
 
 // ===== Escucha de cambios en la sala =====
 function iniciarEscuchaSala(salaId) {
-  if (listenerSala) listenerSala(); // limpiar anterior
+  if (listenerSala) listenerSala();
   const salaRef = ref(db, `partidas/${salaId}`);
   listenerSala = onValue(salaRef, (snap) => {
     if (!snap.exists()) {
-      // Sala eliminada
       resetearApp();
       return;
     }
@@ -256,13 +256,23 @@ function manejarCambioEstado() {
     if (estado === 'esperando') espera.textContent = 'Esperando oponente...';
     else espera.textContent = '¡Oponente conectado! Configurá tu número.';
 
-    // Si ya tengo secreto guardado
     const miData = datosSala[miRol];
     if (miData && miData.secreto) {
       document.getElementById('btn-confirmar-secreto').disabled = true;
       document.getElementById('btn-confirmar-secreto').textContent = '✅ Número guardado';
+      document.getElementById('seccion-listo').classList.remove('oculto');
+      if (miData.listo) {
+        document.getElementById('btn-listo').disabled = true;
+        document.getElementById('btn-listo').textContent = '✅ Listo ✓';
+      } else {
+        document.getElementById('btn-listo').disabled = false;
+        document.getElementById('btn-listo').textContent = '✅ ¡Listo!';
+      }
+    } else {
+      document.getElementById('btn-confirmar-secreto').disabled = false;
+      document.getElementById('btn-confirmar-secreto').textContent = 'Confirmar número';
+      document.getElementById('seccion-listo').classList.add('oculto');
     }
-    // Si ambos tienen secreto, el otro jugador lo cambió a 'jugando' o sigue en configurando
   }
 
   if (estado === 'jugando' || estado === 'ultima_chance') {
@@ -277,6 +287,7 @@ function manejarCambioEstado() {
   }
 }
 
+// (renderizarJuego, mostrarResultadoFinal, etc. sin cambios, sólo ajusté el texto de la última chance)
 function renderizarJuego() {
   const miData = datosSala[miRol];
   const oponenteRol = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
@@ -285,10 +296,8 @@ function renderizarJuego() {
   const turno = datosSala.turno;
   const ronda = datosSala.ronda || 1;
 
-  // Ronda badge
   document.getElementById('ronda-badge').textContent = `Ronda ${ronda}`;
 
-  // Indicador de turno
   const turnoInd = document.getElementById('indicador-turno');
   const turnoTexto = document.getElementById('turno-texto');
   const turnoIcono = document.getElementById('turno-icono');
@@ -308,10 +317,8 @@ function renderizarJuego() {
     turnoIcono.textContent = '🤔';
   }
 
-  // Nombre oponente
   document.getElementById('nombre-oponente').textContent = oponenteData?.nombre ? `🤔 ${oponenteData.nombre}` : '🤔 Oponente';
 
-  // Historial propio
   const listaPropia = document.getElementById('lista-propia');
   listaPropia.innerHTML = '';
   if (miData?.intentos) {
@@ -323,7 +330,6 @@ function renderizarJuego() {
     });
   }
 
-  // Historial oponente
   const listaOponente = document.getElementById('lista-oponente');
   listaOponente.innerHTML = '';
   if (oponenteData?.intentos) {
@@ -335,7 +341,6 @@ function renderizarJuego() {
     });
   }
 
-  // Input de intento habilitado/deshabilitado
   const inputContainer = document.getElementById('input-intento-container');
   const aviso = document.getElementById('aviso-turno-propio');
   if (estado === 'terminado') {
@@ -350,7 +355,6 @@ function renderizarJuego() {
     aviso.textContent = 'Esperando tu turno...';
   }
 
-  // Mensaje "pensando"
   const pensando = document.getElementById('pensando-oponente');
   if (estado !== 'terminado' && turno === oponenteRol) {
     pensando.textContent = '💭 Pensando...';
@@ -358,12 +362,11 @@ function renderizarJuego() {
     pensando.textContent = '';
   }
 
-  // Overlay última chance (si no es mi turno y estado es ultima_chance)
   if (estado === 'ultima_chance' && turno === miRol) {
     overlayUltimaChance.classList.remove('oculto');
     document.getElementById('ultima-chance-titulo').textContent = '⚠️ ¡Última Chance!';
-const nombreOponente = miRol === 'jugador_1' ? datosSala.jugador_2?.nombre : datosSala.jugador_1?.nombre;
-document.getElementById('ultima-chance-texto').textContent = `¡${nombreOponente || 'Tu oponente'} descifró tu número! Tenés este único intento para empatar.`;
+    const nombreOponente = miRol === 'jugador_1' ? datosSala.jugador_2?.nombre : datosSala.jugador_1?.nombre;
+    document.getElementById('ultima-chance-texto').textContent = `¡${nombreOponente || 'Tu oponente'} descifró tu número! Tenés este único intento para empatar.`;
   }
 }
 
@@ -396,7 +399,6 @@ function mostrarResultadoFinal() {
 
   document.getElementById('btn-revancha').onclick = async () => {
     overlay.classList.add('oculto');
-    // Resetear intentos y secretos, nuevo estado
     await update(ref(db, `partidas/${miSala}`), {
       estado: 'configurando',
       turno: 'jugador_1',
@@ -404,11 +406,14 @@ function mostrarResultadoFinal() {
       ganador: null,
       'jugador_1/secreto': null,
       'jugador_1/intentos': [],
+      'jugador_1/listo': false,
       'jugador_2/secreto': null,
-      'jugador_2/intentos': []
+      'jugador_2/intentos': [],
+      'jugador_2/listo': false
     });
     document.getElementById('btn-confirmar-secreto').disabled = false;
     document.getElementById('btn-confirmar-secreto').textContent = 'Confirmar número';
+    document.getElementById('seccion-listo').classList.add('oculto');
     limpiarInputs('secreto-inputs');
     limpiarInputs('intento-inputs');
     mostrarPantalla('config');
@@ -424,7 +429,7 @@ document.getElementById('btn-cerrar-overlay').addEventListener('click', () => {
   overlayUltimaChance.classList.add('oculto');
 });
 
-// ===== Navegación entre inputs de dígitos =====
+// Navegación entre inputs de dígitos
 document.addEventListener('input', (e) => {
   if (e.target.classList.contains('digito-input')) {
     const val = e.target.value;
@@ -455,6 +460,7 @@ function resetearApp() {
   limpiarInputs('intento-inputs');
   document.getElementById('btn-confirmar-secreto').disabled = false;
   document.getElementById('btn-confirmar-secreto').textContent = 'Confirmar número';
+  document.getElementById('seccion-listo').classList.add('oculto');
   document.getElementById('input-intento-container').classList.remove('deshabilitado');
   overlayUltimaChance.classList.add('oculto');
   overlayResultado.classList.add('oculto');
@@ -465,7 +471,6 @@ if (miSala && miRol && miNombre) {
   document.getElementById('nombre-crear').value = miNombre;
   document.getElementById('nombre-unirse').value = miNombre;
   iniciarEscuchaSala(miSala);
-  // Determinar pantalla inicial según estado actual (se actualizará con el listener)
   mostrarPantalla('config');
   document.getElementById('sala-id-config').textContent = miSala;
 } else {
