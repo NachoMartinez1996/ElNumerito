@@ -26,6 +26,17 @@ let miRol = LS.getItem('rol') || null;
 let miNombre = LS.getItem('nombre') || '';
 let datosSala = null;
 let listenerSala = null;
+let botTimer = null;
+let botTurnoEnProceso = false;
+let ultimoTurnoBot = null;
+
+const BOT_ID = 'maquina';
+const NOMBRES_DIFICULTAD = {
+  facil: 'Máquina fácil',
+  media: 'Máquina media',
+  dificil: 'Máquina difícil'
+};
+let numerosPosiblesCache = null;
 
 // ===== Elementos DOM =====
 const pantallas = {
@@ -80,19 +91,117 @@ function calcularBuenosRegulares(secreto, intento) {
   return { buenos, regulares };
 }
 
+function obtenerRolOponente(rol) {
+  return rol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
+}
+
+function obtenerIntentos(sala, rol) {
+  const intentos = sala?.[rol]?.intentos;
+  if (Array.isArray(intentos)) return intentos.filter(Boolean);
+  if (!intentos) return [];
+  return Object.values(intentos).filter(Boolean);
+}
+
+function esModoMaquina(sala = datosSala) {
+  return sala?.modo === 'maquina';
+}
+
+function obtenerNumerosPosibles() {
+  if (numerosPosiblesCache) return numerosPosiblesCache;
+
+  const numeros = [];
+  for (let a = 0; a <= 9; a++) {
+    for (let b = 0; b <= 9; b++) {
+      for (let c = 0; c <= 9; c++) {
+        for (let d = 0; d <= 9; d++) {
+          const numero = `${a}${b}${c}${d}`;
+          if (new Set(numero).size === 4) numeros.push(numero);
+        }
+      }
+    }
+  }
+  numerosPosiblesCache = numeros;
+  return numerosPosiblesCache;
+}
+
+function elegirAleatorio(lista) {
+  return lista[Math.floor(Math.random() * lista.length)];
+}
+
+function generarNumeroSecreto() {
+  return elegirAleatorio(obtenerNumerosPosibles());
+}
+
+function obtenerNumeroAleatorioNoUsado(usados) {
+  const disponibles = obtenerNumerosPosibles().filter(numero => !usados.has(numero));
+  return elegirAleatorio(disponibles.length ? disponibles : obtenerNumerosPosibles());
+}
+
+function obtenerCandidatosPorPistas(intentos) {
+  return obtenerNumerosPosibles().filter(candidato => {
+    return intentos.every(intento => {
+      const resultado = calcularBuenosRegulares(candidato, intento.numero);
+      return resultado.buenos === intento.buenos && resultado.regulares === intento.regulares;
+    });
+  });
+}
+
+function elegirCandidatoMasPrometedor(candidatos) {
+  const posicion = Array.from({ length: 4 }, () => ({}));
+  const presencia = {};
+
+  candidatos.forEach(numero => {
+    [...numero].forEach((digito, idx) => {
+      posicion[idx][digito] = (posicion[idx][digito] || 0) + 1;
+      presencia[digito] = (presencia[digito] || 0) + 1;
+    });
+  });
+
+  return candidatos.reduce((mejor, numero) => {
+    const puntaje = [...numero].reduce((total, digito, idx) => {
+      return total + (posicion[idx][digito] || 0) * 2 + (presencia[digito] || 0);
+    }, 0);
+    if (!mejor || puntaje > mejor.puntaje) return { numero, puntaje };
+    return mejor;
+  }, null)?.numero || elegirAleatorio(candidatos);
+}
+
+function elegirIntentoMaquina(sala) {
+  const dificultad = sala.dificultadMaquina || 'media';
+  const intentos = obtenerIntentos(sala, 'jugador_2');
+  const usados = new Set(intentos.map(intento => intento.numero));
+
+  if (dificultad === 'facil') {
+    return obtenerNumeroAleatorioNoUsado(usados);
+  }
+
+  if (!intentos.length) {
+    return obtenerNumeroAleatorioNoUsado(usados);
+  }
+
+  let candidatos = obtenerCandidatosPorPistas(intentos).filter(numero => !usados.has(numero));
+  if (!candidatos.length) candidatos = obtenerNumerosPosibles().filter(numero => !usados.has(numero));
+  if (!candidatos.length) candidatos = obtenerNumerosPosibles();
+
+  if (dificultad === 'media') {
+    const seEquivoca = intentos.length < 2 || Math.random() < 0.3;
+    return seEquivoca ? obtenerNumeroAleatorioNoUsado(usados) : elegirAleatorio(candidatos);
+  }
+
+  return elegirCandidatoMasPrometedor(candidatos);
+}
+
 // ===== Lobby: Crear / Unirse =====
-document.getElementById('tab-crear').addEventListener('click', () => {
-  document.getElementById('tab-crear').classList.add('active');
-  document.getElementById('tab-unirse').classList.remove('active');
-  document.getElementById('form-crear').classList.remove('oculto');
-  document.getElementById('form-unirse').classList.add('oculto');
-});
-document.getElementById('tab-unirse').addEventListener('click', () => {
-  document.getElementById('tab-unirse').classList.add('active');
-  document.getElementById('tab-crear').classList.remove('active');
-  document.getElementById('form-unirse').classList.remove('oculto');
-  document.getElementById('form-crear').classList.add('oculto');
-});
+function activarTabLobby(tabActiva) {
+  ['crear', 'unirse', 'maquina'].forEach(tab => {
+    document.getElementById(`tab-${tab}`).classList.toggle('active', tab === tabActiva);
+    document.getElementById(`form-${tab}`).classList.toggle('oculto', tab !== tabActiva);
+  });
+}
+
+document.getElementById('tab-crear').addEventListener('click', () => activarTabLobby('crear'));
+document.getElementById('tab-unirse').addEventListener('click', () => activarTabLobby('unirse'));
+document.getElementById('tab-maquina').addEventListener('click', () => activarTabLobby('maquina'));
 
 document.getElementById('btn-crear').addEventListener('click', async () => {
   const nombre = document.getElementById('nombre-crear').value.trim();
@@ -151,6 +260,45 @@ document.getElementById('btn-unirse').addEventListener('click', async () => {
   document.getElementById('estado-sala-config').textContent = '¡Oponente conectado!';
 });
 
+document.getElementById('btn-jugar-maquina').addEventListener('click', async () => {
+  const nombre = document.getElementById('nombre-maquina').value.trim();
+  const dificultad = document.getElementById('dificultad-maquina').value;
+  if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
+
+  const salaId = generarCodigoSala();
+  miNombre = nombre;
+  miRol = 'jugador_1';
+  miSala = salaId;
+  LS.setItem('nombre', nombre);
+  LS.setItem('rol', miRol);
+  LS.setItem('salaId', salaId);
+
+  const salaRef = ref(db, `partidas/${salaId}`);
+  await set(salaRef, {
+    estado: 'configurando',
+    modo: 'maquina',
+    dificultadMaquina: dificultad,
+    creadorId: jugadorId,
+    turno: 'jugador_1',
+    ronda: 1,
+    ganador: null,
+    jugador_1: { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true, listo: false },
+    jugador_2: {
+      id: BOT_ID,
+      nombre: NOMBRES_DIFICULTAD[dificultad] || NOMBRES_DIFICULTAD.media,
+      secreto: generarNumeroSecreto(),
+      intentos: [],
+      conectado: true,
+      listo: true
+    }
+  });
+
+  iniciarEscuchaSala(salaId);
+  mostrarPantalla('config');
+  document.getElementById('sala-id-config').textContent = salaId;
+  document.getElementById('estado-sala-config').textContent = 'La máquina ya eligió su número.';
+});
+
 // ===== Configuración del número secreto =====
 document.getElementById('btn-confirmar-secreto').addEventListener('click', async () => {
   const digitos = obtenerDigitosDeInputs('secreto-inputs');
@@ -188,7 +336,60 @@ document.getElementById('btn-abandonar-config').addEventListener('click', async 
   resetearApp();
 });
 
-// ===== Juego: Enviar intento (sin cambios) =====
+// ===== Juego: Enviar intento =====
+async function registrarIntento(rol, digitos) {
+  if (!miSala) return false;
+  const salaRef = ref(db, `partidas/${miSala}`);
+  const snap = await get(salaRef);
+  if (!snap.exists()) return false;
+
+  const sala = snap.val();
+  const estado = sala.estado;
+  if ((estado !== 'jugando' && estado !== 'ultima_chance') || sala.turno !== rol) return false;
+
+  const oponenteRol = obtenerRolOponente(rol);
+  const secretoOponente = sala[oponenteRol]?.secreto;
+  if (!secretoOponente) return false;
+
+  const { buenos, regulares } = calcularBuenosRegulares(secretoOponente, digitos);
+  const intentos = obtenerIntentos(sala, rol);
+  intentos.push({ numero: digitos, buenos, regulares });
+
+  const cambios = {
+    [`${rol}/intentos`]: intentos
+  };
+
+  if (buenos === 4) {
+    if (rol === 'jugador_1') {
+      const rondaActual = sala.ronda || 1;
+      const intentosJ2 = obtenerIntentos(sala, 'jugador_2').length;
+      if (intentosJ2 < rondaActual) {
+        cambios.estado = 'ultima_chance';
+        cambios.turno = 'jugador_2';
+      } else {
+        cambios.estado = 'terminado';
+        cambios.ganador = 'jugador_1';
+      }
+    } else if (estado === 'ultima_chance') {
+      cambios.estado = 'terminado';
+      cambios.ganador = 'empate';
+    } else {
+      cambios.estado = 'terminado';
+      cambios.ganador = 'jugador_2';
+    }
+  } else if (estado === 'ultima_chance') {
+    cambios.estado = 'terminado';
+    cambios.ganador = oponenteRol;
+  } else {
+    cambios.turno = oponenteRol;
+    cambios.ronda = rol === 'jugador_2' ? (sala.ronda || 1) + 1 : (sala.ronda || 1);
+    cambios.estado = 'jugando';
+  }
+
+  await update(salaRef, cambios);
+  return true;
+}
+
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
   if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol) {
     return mostrarError('error-intento', 'No es tu turno.');
@@ -197,39 +398,50 @@ document.getElementById('btn-enviar-intento').addEventListener('click', async ()
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-intento', error);
 
-  const secretoOponente = miRol === 'jugador_1' ? datosSala.jugador_2.secreto : datosSala.jugador_1.secreto;
-  const { buenos, regulares } = calcularBuenosRegulares(secretoOponente, digitos);
-
-  const intentosRef = ref(db, `partidas/${miSala}/${miRol}/intentos`);
-  const snap = await get(intentosRef);
-  const intentos = snap.val() || [];
-  const nuevoIntento = { numero: digitos, buenos, regulares };
-  intentos.push(nuevoIntento);
-  await set(intentosRef, intentos);
-  limpiarInputs('intento-inputs');
-
-  if (buenos === 4) {
-    if (miRol === 'jugador_1') {
-      const rondaActual = datosSala.ronda || 1;
-      const intentosJ2 = datosSala.jugador_2?.intentos?.length || 0;
-      if (intentosJ2 < rondaActual) {
-        await update(ref(db, `partidas/${miSala}`), { estado: 'ultima_chance', turno: 'jugador_2' });
-      } else {
-        await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'jugador_1' });
-      }
-    } else {
-      if (datosSala.estado === 'ultima_chance') {
-        await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'empate' });
-      } else {
-        await update(ref(db, `partidas/${miSala}`), { estado: 'terminado', ganador: 'jugador_2' });
-      }
-    }
-  } else {
-    const nuevoTurno = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
-    const nuevaRonda = miRol === 'jugador_2' ? (datosSala.ronda || 1) + 1 : (datosSala.ronda || 1);
-    await update(ref(db, `partidas/${miSala}`), { turno: nuevoTurno, ronda: nuevaRonda, estado: 'jugando' });
-  }
+  const enviado = await registrarIntento(miRol, digitos);
+  if (enviado) limpiarInputs('intento-inputs');
 });
+
+function programarJugadaMaquina() {
+  if (!esModoMaquina() || miRol !== 'jugador_1') return;
+  if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance')) return;
+  if (datosSala.turno !== 'jugador_2') return;
+
+  const claveTurno = [
+    miSala,
+    datosSala.estado,
+    datosSala.ronda || 1,
+    obtenerIntentos(datosSala, 'jugador_1').length,
+    obtenerIntentos(datosSala, 'jugador_2').length
+  ].join(':');
+
+  if (botTurnoEnProceso || ultimoTurnoBot === claveTurno) return;
+
+  ultimoTurnoBot = claveTurno;
+  botTurnoEnProceso = true;
+  if (botTimer) clearTimeout(botTimer);
+
+  const demora = datosSala.estado === 'ultima_chance' ? 1200 : 800 + Math.floor(Math.random() * 900);
+  botTimer = setTimeout(async () => {
+    try {
+      if (!miSala) return;
+      const snap = await get(ref(db, `partidas/${miSala}`));
+      if (!snap.exists()) return;
+      const salaActual = snap.val();
+      if (!esModoMaquina(salaActual) || salaActual.turno !== 'jugador_2') return;
+      if (salaActual.estado !== 'jugando' && salaActual.estado !== 'ultima_chance') return;
+
+      const intento = elegirIntentoMaquina(salaActual);
+      await registrarIntento('jugador_2', intento);
+    } catch (error) {
+      console.error('No se pudo completar la jugada de la máquina:', error);
+      ultimoTurnoBot = null;
+    } finally {
+      botTurnoEnProceso = false;
+      botTimer = null;
+    }
+  }, demora);
+}
 
 // ===== Escucha de cambios en la sala =====
 function iniciarEscuchaSala(salaId) {
@@ -254,6 +466,7 @@ function manejarCambioEstado() {
     mostrarPantalla('config');
     const espera = document.getElementById('estado-sala-config');
     if (estado === 'esperando') espera.textContent = 'Esperando oponente...';
+    else if (esModoMaquina()) espera.textContent = 'La máquina ya eligió su número. Configurá el tuyo.';
     else espera.textContent = '¡Oponente conectado! Configurá tu número.';
 
     const miData = datosSala[miRol];
@@ -278,6 +491,7 @@ function manejarCambioEstado() {
   if (estado === 'jugando' || estado === 'ultima_chance') {
     mostrarPantalla('juego');
     renderizarJuego();
+    programarJugadaMaquina();
   }
 
   if (estado === 'terminado') {
@@ -287,14 +501,13 @@ function manejarCambioEstado() {
   }
 }
 
-// (renderizarJuego, mostrarResultadoFinal, etc. sin cambios, sólo ajusté el texto de la última chance)
 function renderizarJuego() {
-  const miData = datosSala[miRol];
-  const oponenteRol = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
+  const oponenteRol = obtenerRolOponente(miRol);
   const oponenteData = datosSala[oponenteRol];
   const estado = datosSala.estado;
   const turno = datosSala.turno;
   const ronda = datosSala.ronda || 1;
+  const contraMaquina = esModoMaquina();
 
   document.getElementById('ronda-badge').textContent = `Ronda ${ronda}`;
 
@@ -305,7 +518,7 @@ function renderizarJuego() {
 
   if (estado === 'ultima_chance') {
     turnoInd.classList.add('ultima');
-    turnoTexto.textContent = (turno === miRol) ? '⚠️ ¡ÚLTIMA CHANCE! ¡Adiviná YA!' : '⏳ Tu oponente tiene la última chance...';
+    turnoTexto.textContent = (turno === miRol) ? '⚠️ ¡ÚLTIMA CHANCE! ¡Adiviná YA!' : (contraMaquina ? '⏳ La máquina tiene la última chance...' : '⏳ Tu oponente tiene la última chance...');
     turnoIcono.textContent = (turno === miRol) ? '🔥' : '😰';
   } else if (turno === miRol) {
     turnoInd.classList.add('mi-turno');
@@ -313,33 +526,30 @@ function renderizarJuego() {
     turnoIcono.textContent = '🎯';
   } else {
     turnoInd.classList.add('su-turno');
-    turnoTexto.textContent = '⏳ Turno del oponente';
-    turnoIcono.textContent = '🤔';
+    turnoTexto.textContent = contraMaquina ? '⏳ Turno de la máquina' : '⏳ Turno del oponente';
+    turnoIcono.textContent = contraMaquina ? '🤖' : '🤔';
   }
 
-  document.getElementById('nombre-oponente').textContent = oponenteData?.nombre ? `🤔 ${oponenteData.nombre}` : '🤔 Oponente';
+  const iconoOponente = contraMaquina ? '🤖' : '🤔';
+  document.getElementById('nombre-oponente').textContent = oponenteData?.nombre ? `${iconoOponente} ${oponenteData.nombre}` : `${iconoOponente} Oponente`;
 
   const listaPropia = document.getElementById('lista-propia');
   listaPropia.innerHTML = '';
-  if (miData?.intentos) {
-    miData.intentos.forEach((int, idx) => {
-      const fila = document.createElement('div');
-      fila.className = 'historial-fila';
-      fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
-      listaPropia.appendChild(fila);
-    });
-  }
+  obtenerIntentos(datosSala, miRol).forEach((int, idx) => {
+    const fila = document.createElement('div');
+    fila.className = 'historial-fila';
+    fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
+    listaPropia.appendChild(fila);
+  });
 
   const listaOponente = document.getElementById('lista-oponente');
   listaOponente.innerHTML = '';
-  if (oponenteData?.intentos) {
-    oponenteData.intentos.forEach((int, idx) => {
-      const fila = document.createElement('div');
-      fila.className = 'historial-fila';
-      fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
-      listaOponente.appendChild(fila);
-    });
-  }
+  obtenerIntentos(datosSala, oponenteRol).forEach((int, idx) => {
+    const fila = document.createElement('div');
+    fila.className = 'historial-fila';
+    fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
+    listaOponente.appendChild(fila);
+  });
 
   const inputContainer = document.getElementById('input-intento-container');
   const aviso = document.getElementById('aviso-turno-propio');
@@ -357,7 +567,7 @@ function renderizarJuego() {
 
   const pensando = document.getElementById('pensando-oponente');
   if (estado !== 'terminado' && turno === oponenteRol) {
-    pensando.textContent = '💭 Pensando...';
+    pensando.textContent = contraMaquina ? '💭 Calculando...' : '💭 Pensando...';
   } else {
     pensando.textContent = '';
   }
@@ -377,15 +587,16 @@ function mostrarResultadoFinal() {
   const titulo = document.getElementById('resultado-titulo');
   const detalle = document.getElementById('resultado-detalle');
   const secretos = document.getElementById('resultado-secretos');
+  const contraMaquina = esModoMaquina();
 
   const miSecreto = datosSala[miRol]?.secreto || '????';
-  const opRol = miRol === 'jugador_1' ? 'jugador_2' : 'jugador_1';
+  const opRol = obtenerRolOponente(miRol);
   const opSecreto = datosSala[opRol]?.secreto || '????';
 
   if (ganador === miRol) {
     titulo.textContent = '🎉 ¡Ganaste!';
     titulo.style.color = 'var(--exito)';
-    detalle.textContent = 'Descifraste el número de tu oponente.';
+    detalle.textContent = contraMaquina ? 'Descifraste el número de la máquina.' : 'Descifraste el número de tu oponente.';
   } else if (ganador === 'empate') {
     titulo.textContent = '🤝 ¡Empate!';
     titulo.style.color = 'var(--bueno)';
@@ -393,13 +604,13 @@ function mostrarResultadoFinal() {
   } else {
     titulo.textContent = '😞 Perdiste';
     titulo.style.color = 'var(--error)';
-    detalle.textContent = 'Tu oponente descifró tu número primero.';
+    detalle.textContent = contraMaquina ? 'La máquina descifró tu número primero.' : 'Tu oponente descifró tu número primero.';
   }
   secretos.textContent = `Tu número: ${miSecreto} | Su número: ${opSecreto}`;
 
   document.getElementById('btn-revancha').onclick = async () => {
     overlay.classList.add('oculto');
-    await update(ref(db, `partidas/${miSala}`), {
+    const cambios = {
       estado: 'configurando',
       turno: 'jugador_1',
       ronda: 1,
@@ -407,10 +618,23 @@ function mostrarResultadoFinal() {
       'jugador_1/secreto': null,
       'jugador_1/intentos': [],
       'jugador_1/listo': false,
-      'jugador_2/secreto': null,
-      'jugador_2/intentos': [],
-      'jugador_2/listo': false
-    });
+      'jugador_2/intentos': []
+    };
+
+    if (contraMaquina) {
+      cambios['jugador_2/secreto'] = generarNumeroSecreto();
+      cambios['jugador_2/listo'] = true;
+    } else {
+      cambios['jugador_2/secreto'] = null;
+      cambios['jugador_2/listo'] = false;
+    }
+
+    ultimoTurnoBot = null;
+    if (botTimer) clearTimeout(botTimer);
+    botTimer = null;
+    botTurnoEnProceso = false;
+
+    await update(ref(db, `partidas/${miSala}`), cambios);
     document.getElementById('btn-confirmar-secreto').disabled = false;
     document.getElementById('btn-confirmar-secreto').textContent = 'Confirmar número';
     document.getElementById('seccion-listo').classList.add('oculto');
@@ -450,6 +674,10 @@ document.addEventListener('keydown', (e) => {
 // ===== Reset =====
 function resetearApp() {
   if (listenerSala) { listenerSala(); listenerSala = null; }
+  if (botTimer) clearTimeout(botTimer);
+  botTimer = null;
+  botTurnoEnProceso = false;
+  ultimoTurnoBot = null;
   datosSala = null;
   miSala = null;
   miRol = null;
@@ -470,6 +698,7 @@ function resetearApp() {
 if (miSala && miRol && miNombre) {
   document.getElementById('nombre-crear').value = miNombre;
   document.getElementById('nombre-unirse').value = miNombre;
+  document.getElementById('nombre-maquina').value = miNombre;
   iniciarEscuchaSala(miSala);
   mostrarPantalla('config');
   document.getElementById('sala-id-config').textContent = miSala;

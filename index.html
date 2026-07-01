@@ -29,6 +29,7 @@
       <div class="tabs">
         <button id="tab-crear" class="tab active">Crear Sala</button>
         <button id="tab-unirse" class="tab">Unirse</button>
+        <button id="tab-maquina" class="tab">Máquina</button>
       </div>
       <div id="form-crear" class="form-panel">
         <input type="text" id="nombre-crear" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
@@ -39,9 +40,18 @@
         <input type="text" id="codigo-sala" placeholder="Código de sala" maxlength="6" autocomplete="off" style="text-transform:uppercase; letter-spacing:0.3em;" />
         <button id="btn-unirse" class="btn-primary">Unirse a Sala</button>
       </div>
+      <div id="form-maquina" class="form-panel oculto">
+        <input type="text" id="nombre-maquina" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
+        <select id="dificultad-maquina" aria-label="Dificultad de la máquina">
+          <option value="facil">Fácil</option>
+          <option value="media" selected>Media</option>
+          <option value="dificil">Difícil</option>
+        </select>
+        <button id="btn-jugar-maquina" class="btn-primary">Jugar contra la máquina</button>
+      </div>
       <p id="error-lobby" class="error-msg"></p>
     </div>
-    <p class="info-pie">Compartí el código con un amigo y jugá en tiempo real.</p>
+    <p class="info-pie">Compartí el código con un amigo o jugá contra la máquina.</p>
   </main>
 
   <!-- Pantalla de Configuración (número secreto) -->

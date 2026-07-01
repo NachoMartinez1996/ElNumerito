@@ -63,7 +63,7 @@ body {
 /* ===== Tabs ===== */
 .tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 4px; }
 .tab {
-  flex: 1; padding: 10px; border: none; background: transparent;
+  flex: 1; min-width: 0; padding: 10px 8px; border: none; background: transparent;
   color: var(--texto-tenue); font-size: 0.95rem; font-weight: 600;
   border-radius: 10px; cursor: pointer; transition: all 0.25s;
 }
@@ -74,12 +74,22 @@ body {
 .form-panel.oculto { display: none; }
 
 /* ===== Inputs ===== */
-input[type="text"] {
+input[type="text"], select {
   background: var(--fondo-input); border: 1px solid var(--border-card);
   border-radius: 12px; padding: 12px 16px; color: #fff; font-size: 1rem;
   outline: none; transition: border 0.3s;
 }
-input[type="text"]:focus { border-color: var(--acento); }
+input[type="text"]:focus, select:focus { border-color: var(--acento); }
+select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--texto-tenue) 50%),
+                    linear-gradient(135deg, var(--texto-tenue) 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+select option { background: #14142b; color: #fff; }
 
 .digitos-inputs {
   display: flex; gap: 10px; justify-content: center;
