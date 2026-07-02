@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#0a0a1a" />
   <meta name="description" content="Numeritos - El clásico juego de lógica y deducción. Desafiá a un amigo en tiempo real." />
   
-  <!-- Favicons en todos los formatos -->
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
@@ -24,12 +23,15 @@
     <div class="logo-container">
       <h1 class="logo">Numeritos</h1>
       <p class="subtitulo">El clásico de lógica y deducción</p>
+      <button id="btn-ayuda" class="btn-ayuda" type="button">?</button>
     </div>
     <div class="card">
       <div class="tabs">
         <button id="tab-crear" class="tab active">Crear Sala</button>
         <button id="tab-unirse" class="tab">Unirse</button>
         <button id="tab-maquina" class="tab">Máquina</button>
+        <button id="tab-entrenar" class="tab">Entrenar</button>
+        <button id="tab-legendario" class="tab">Legendario</button>
       </div>
       <div id="form-crear" class="form-panel">
         <input type="text" id="nombre-crear" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
@@ -48,6 +50,20 @@
           <option value="dificil">Difícil</option>
         </select>
         <button id="btn-jugar-maquina" class="btn-primary">Jugar contra la máquina</button>
+      </div>
+      <div id="form-entrenar" class="form-panel oculto">
+        <input type="text" id="nombre-entrenar" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
+        <button id="btn-entrenar" class="btn-primary">Comenzar entrenamiento</button>
+      </div>
+      <div id="form-legendario" class="form-panel oculto">
+        <input type="text" id="nombre-legendario" placeholder="Tu nombre" maxlength="12" autocomplete="off" />
+        <select id="dificultad-legendario" aria-label="Dificultad de la máquina en modo legendario">
+          <option value="facil">Fácil</option>
+          <option value="media" selected>Media</option>
+          <option value="dificil">Difícil</option>
+        </select>
+        <button id="btn-legendario-maquina" class="btn-primary">Desafiar a la máquina</button>
+        <button id="btn-legendario-amigo" class="btn-primary">Crear sala con amigo</button>
       </div>
       <p id="error-lobby" class="error-msg"></p>
     </div>
@@ -73,12 +89,10 @@
       <p id="error-secreto" class="error-msg"></p>
       <button id="btn-confirmar-secreto" class="btn-primary">Confirmar número</button>
 
-      <!-- Sección de "Listo" (aparece después de confirmar) -->
       <div id="seccion-listo" class="oculto" style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
         <button id="btn-listo" class="btn-primary">✅ ¡Listo!</button>
       </div>
 
-      <!-- Abandonar sala -->
       <button id="btn-abandonar-config" class="btn-secondary" style="margin-top: 12px;">🚪 Abandonar sala</button>
     </div>
   </main>
@@ -89,13 +103,13 @@
       <span class="sala-badge">Sala: <strong id="sala-id-juego"></strong></span>
       <span id="ronda-badge" class="ronda-badge">Ronda 1</span>
       <button id="btn-ver-resultado" class="btn-mini oculto" type="button">Ver resultado</button>
+      <button id="btn-abandonar-juego" class="btn-mini" type="button">🚪 Abandonar</button>
     </div>
     <div id="indicador-turno" class="turno-indicador">
       <span id="turno-texto"></span>
       <span id="turno-icono"></span>
     </div>
-    <div class="juego-layout">
-      <!-- Tu lado -->
+    <div id="juego-layout-container" class="juego-layout">
       <section class="jugador-panel" id="panel-propio">
         <h3>😎 Tus intentos</h3>
         <div class="historial" id="historial-propio">
@@ -103,8 +117,8 @@
           <div id="lista-propia"></div>
         </div>
         <div class="descartes-panel">
-          <h4>Descartes</h4>
-          <div id="descartes-digitos" class="descartes-digitos" aria-label="Dígitos descartados"></div>
+          <h4>Candidatos</h4>
+          <div id="descartes-digitos" class="descartes-digitos" aria-label="Dígitos candidatos"></div>
         </div>
         <div class="input-intento" id="input-intento-container">
           <p class="turno-aviso" id="aviso-turno-propio"></p>
@@ -118,7 +132,6 @@
           <button id="btn-enviar-intento" class="btn-primary">Enviar intento</button>
         </div>
       </section>
-      <!-- Lado del oponente -->
       <section class="jugador-panel" id="panel-oponente">
         <h3 id="nombre-oponente">🤔 Oponente</h3>
         <div class="historial" id="historial-oponente">
@@ -148,6 +161,25 @@
       <button id="btn-ver-partida" class="btn-secondary">Ver partida</button>
       <button id="btn-revancha" class="btn-primary">🔄 Revancha</button>
       <button id="btn-salir" class="btn-secondary">Salir</button>
+    </div>
+  </div>
+
+  <!-- Overlay de Ayuda / Cómo se juega -->
+  <div id="overlay-ayuda" class="overlay oculto">
+    <div class="overlay-card">
+      <h2>📖 Cómo se juega</h2>
+      <p style="text-align: left; line-height: 1.6; max-width: 340px; margin: 0 auto;">
+        <strong>Numeritos</strong> es un juego de lógica y deducción.<br><br>
+        🔒 Cada jugador elige un número secreto de <strong>4 dígitos distintos</strong> (sin repetir).<br>
+        🎯 Por turnos, un jugador propone un número de 4 dígitos y el rival le dice cuántos <strong>Buenos</strong> (dígito correcto en la posición correcta) y cuántos <strong>Regulares</strong> (dígito correcto pero en una posición equivocada) tiene.<br>
+        🏆 Gana quien adivine primero el número del otro.<br><br>
+        <strong>Modos disponibles:</strong><br>
+        • <strong>Crear Sala / Unirse:</strong> jugá contra un amigo en tiempo real.<br>
+        • <strong>Máquina:</strong> desafiá a la computadora (disponible sin conexión).<br>
+        • <strong>Entrenar:</strong> practicá sin presión, solo tenés que adivinar el número del sistema.<br>
+        • <strong>Legendario:</strong> vos y un amigo (o la máquina) comparten el mismo número secreto. ¡El primero que lo descubre gana!
+      </p>
+      <button id="btn-cerrar-ayuda" class="btn-primary">Entendido</button>
     </div>
   </div>
 

@@ -52,6 +52,16 @@ body {
 }
 .subtitulo { color: var(--texto-tenue); font-size: 0.95rem; margin-top: 4px; }
 
+/* ===== Botón de ayuda ===== */
+.btn-ayuda {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(255,255,255,0.08); border: 1px solid var(--border-card);
+  color: var(--texto-tenue); font-size: 1.2rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: 0.3s; margin-top: 8px;
+}
+.btn-ayuda:hover { background: rgba(255,255,255,0.15); color: #fff; }
+
 /* ===== Cards ===== */
 .card {
   background: var(--bg-card); border: 1px solid var(--border-card);
@@ -61,11 +71,14 @@ body {
 }
 
 /* ===== Tabs ===== */
-.tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 4px; }
+.tabs {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+  background: rgba(255,255,255,0.03); border-radius: 12px; padding: 4px;
+}
 .tab {
-  flex: 1; min-width: 0; padding: 10px 8px; border: none; background: transparent;
-  color: var(--texto-tenue); font-size: 0.95rem; font-weight: 600;
-  border-radius: 10px; cursor: pointer; transition: all 0.25s;
+  min-width: 0; padding: 10px 4px; border: none; background: transparent;
+  color: var(--texto-tenue); font-size: 0.85rem; font-weight: 600;
+  border-radius: 10px; cursor: pointer; transition: all 0.25s; text-align: center;
 }
 .tab.active { background: rgba(255,255,255,0.1); color: #fff; }
 
@@ -173,8 +186,20 @@ select option { background: #14142b; color: #fff; }
 .juego-layout {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;
 }
+.juego-layout.entrenamiento {
+  grid-template-columns: 1fr;
+}
+.juego-layout.entrenamiento #panel-oponente { display: none; }
+
+.juego-layout.legendario {
+  grid-template-columns: 1fr;
+}
+.juego-layout.legendario #panel-oponente { display: none; }
+
 @media (max-width: 500px) {
   .juego-layout { grid-template-columns: 1fr; }
+  .juego-layout.entrenamiento #panel-oponente { display: none !important; }
+  .juego-layout.legendario #panel-oponente { display: none !important; }
 }
 
 .jugador-panel {
@@ -227,6 +252,14 @@ select option { background: #14142b; color: #fff; }
   text-decoration: line-through; text-decoration-thickness: 2px;
   background: rgba(255,82,82,0.08); border-color: rgba(255,82,82,0.28);
 }
+.descarte-btn.marcado {
+  color: #000;
+  background: rgba(0,229,255,0.25);
+  border-color: rgba(0,229,255,0.6);
+  box-shadow: 0 0 12px rgba(0,229,255,0.3);
+  text-decoration: none;
+  opacity: 1;
+}
 
 /* ===== Input intento ===== */
 .input-intento { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
@@ -245,7 +278,7 @@ select option { background: #14142b; color: #fff; }
 .overlay-card {
   background: #14142b; border: 1px solid var(--border-card);
   border-radius: var(--radio); padding: 32px 24px;
-  text-align: center; max-width: 380px; width: 90%;
+  text-align: center; max-width: 400px; width: 90%;
   box-shadow: 0 16px 48px rgba(0,0,0,0.6);
   display: flex; flex-direction: column; gap: 16px; align-items: center;
 }

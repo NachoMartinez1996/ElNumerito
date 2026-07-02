@@ -1,3 +1,4 @@
+// ===== Firebase =====
 const firebaseConfig = {
   apiKey: "AIzaSyCOLLXFxys_peIkzRY1gdpstkV67O5u1DQ",
   authDomain: "elnumerito.firebaseapp.com",
@@ -26,9 +27,14 @@ let botTimer = null;
 let botTurnoEnProceso = false;
 let ultimoTurnoBot = null;
 let revisandoPartidaTerminada = false;
+let leyendaRevisionActivada = false;   // <-- NUEVO: activa la revisión del oponente en Legendario
 
 const LOCAL_SALA_ID = 'LOCAL';
 const LOCAL_MACHINE_KEY = 'partidaMaquinaLocal';
+const ENTRENAMIENTO_KEY = 'partidaEntrenamientoLocal';
+const LEGENDARIO_KEY = 'partidaLegendarioLocal';
+const ENTRENAMIENTO_SALA_ID = 'ENTRENAMIENTO';
+const LEGENDARIO_SALA_ID = 'LEGENDARIO';
 const DIGITOS_DESCARTE = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const BOT_ID = 'maquina';
 const NOMBRES_DIFICULTAD = {
@@ -46,9 +52,14 @@ const pantallas = {
 };
 const overlayUltimaChance = document.getElementById('overlay-ultima-chance');
 const overlayResultado = document.getElementById('overlay-resultado');
+const overlayAyuda = document.getElementById('overlay-ayuda');
+const btnAyuda = document.getElementById('btn-ayuda');
+const btnCerrarAyuda = document.getElementById('btn-cerrar-ayuda');
 const btnVerResultado = document.getElementById('btn-ver-resultado');
+const btnAbandonarJuego = document.getElementById('btn-abandonar-juego');
 const descartesDigitos = document.getElementById('descartes-digitos');
 const avisoOffline = document.getElementById('offline-aviso');
+const juegoLayoutContainer = document.getElementById('juego-layout-container');
 
 // ===== Utilidades =====
 function generarId() {
@@ -93,19 +104,41 @@ async function cargarFirebase() {
 function esPartidaLocal(sala = datosSala) {
   return Boolean(sala?.local);
 }
+function esModoMaquina(sala = datosSala) {
+  return sala?.modo === 'maquina';
+}
+function esModoEntrenamiento(sala = datosSala) {
+  return sala?.modo === 'entrenamiento';
+}
+function esModoLegendario(sala = datosSala) {
+  return sala?.modo === 'legendario';
+}
 
 function guardarPartidaLocal() {
-  if (!esPartidaLocal()) return;
-  LS.setItem(LOCAL_MACHINE_KEY, JSON.stringify(datosSala));
+  if (!datosSala) return;
+  if (datosSala.modo === 'maquina') {
+    LS.setItem(LOCAL_MACHINE_KEY, JSON.stringify(datosSala));
+  } else if (datosSala.modo === 'entrenamiento') {
+    LS.setItem(ENTRENAMIENTO_KEY, JSON.stringify(datosSala));
+  } else if (datosSala.modo === 'legendario') {
+    LS.setItem(LEGENDARIO_KEY, JSON.stringify(datosSala));
+  }
 }
 
 function cargarPartidaLocal() {
   try {
     const guardada = JSON.parse(LS.getItem(LOCAL_MACHINE_KEY) || 'null');
-    return esPartidaLocal(guardada) ? guardada : null;
-  } catch {
-    return null;
-  }
+    if (esPartidaLocal(guardada)) return guardada;
+  } catch {}
+  try {
+    const guardada = JSON.parse(LS.getItem(ENTRENAMIENTO_KEY) || 'null');
+    if (esPartidaLocal(guardada)) return guardada;
+  } catch {}
+  try {
+    const guardada = JSON.parse(LS.getItem(LEGENDARIO_KEY) || 'null');
+    if (esPartidaLocal(guardada)) return guardada;
+  } catch {}
+  return null;
 }
 
 function aplicarCambioAnidado(obj, ruta, valor) {
@@ -185,20 +218,39 @@ function obtenerClaveDescartes() {
 
 function cargarDescartes() {
   const clave = obtenerClaveDescartes();
-  if (!clave) return new Set();
+  if (!clave) return {};
 
   try {
-    const guardados = JSON.parse(LS.getItem(clave) || '[]');
-    return new Set(guardados.filter(digito => DIGITOS_DESCARTE.includes(digito)));
-  } catch {
-    return new Set();
-  }
+    const guardado = JSON.parse(LS.getItem(clave) || 'null');
+    if (Array.isArray(guardado)) {
+      const estados = {};
+      DIGITOS_DESCARTE.forEach(d => estados[d] = 0);
+      guardado.forEach(d => { if (DIGITOS_DESCARTE.includes(d)) estados[d] = 2; });
+      guardarDescartes(estados);
+      return estados;
+    }
+    if (guardado && typeof guardado === 'object') {
+      DIGITOS_DESCARTE.forEach(d => {
+        if (!(d in guardado) || typeof guardado[d] !== 'number') guardado[d] = 0;
+      });
+      return guardado;
+    }
+  } catch {}
+
+  const estados = {};
+  DIGITOS_DESCARTE.forEach(d => estados[d] = 0);
+  return estados;
 }
 
 function guardarDescartes(descartes) {
   const clave = obtenerClaveDescartes();
   if (!clave) return;
-  LS.setItem(clave, JSON.stringify([...descartes]));
+  const aGuardar = {};
+  DIGITOS_DESCARTE.forEach(d => {
+    const val = descartes[d];
+    aGuardar[d] = (val === 1 || val === 2) ? val : 0;
+  });
+  LS.setItem(clave, JSON.stringify(aGuardar));
 }
 
 function renderizarDescartes() {
@@ -208,11 +260,13 @@ function renderizarDescartes() {
   descartesDigitos.innerHTML = '';
   DIGITOS_DESCARTE.forEach(digito => {
     const boton = document.createElement('button');
-    const tachado = descartes.has(digito);
+    const estado = descartes[digito] || 0;
     boton.type = 'button';
-    boton.className = `descarte-btn${tachado ? ' tachado' : ''}`;
+    boton.className = 'descarte-btn';
+    if (estado === 1) boton.classList.add('marcado');
+    else if (estado === 2) boton.classList.add('tachado');
     boton.dataset.digito = digito;
-    boton.setAttribute('aria-pressed', tachado ? 'true' : 'false');
+    boton.setAttribute('aria-pressed', estado === 0 ? 'false' : 'true');
     boton.textContent = digito;
     descartesDigitos.appendChild(boton);
   });
@@ -258,10 +312,6 @@ function obtenerIntentos(sala, rol) {
   if (Array.isArray(intentos)) return intentos.filter(Boolean);
   if (!intentos) return [];
   return Object.values(intentos).filter(Boolean);
-}
-
-function esModoMaquina(sala = datosSala) {
-  return sala?.modo === 'maquina';
 }
 
 function obtenerNumerosPosibles() {
@@ -326,7 +376,8 @@ function elegirCandidatoMasPrometedor(candidatos) {
 
 function elegirIntentoMaquina(sala) {
   const dificultad = sala.dificultadMaquina || 'media';
-  const intentos = obtenerIntentos(sala, 'jugador_2');
+  const rolBot = esModoLegendario(sala) ? 'jugador_2' : 'jugador_2';
+  const intentos = obtenerIntentos(sala, rolBot);
   const usados = new Set(intentos.map(intento => intento.numero));
 
   if (dificultad === 'facil') {
@@ -349,9 +400,9 @@ function elegirIntentoMaquina(sala) {
   return elegirCandidatoMasPrometedor(candidatos);
 }
 
-// ===== Lobby: Crear / Unirse =====
+// ===== Lobby: Crear / Unirse / Máquina / Entrenar / Legendario =====
 function activarTabLobby(tabActiva) {
-  ['crear', 'unirse', 'maquina'].forEach(tab => {
+  ['crear', 'unirse', 'maquina', 'entrenar', 'legendario'].forEach(tab => {
     document.getElementById(`tab-${tab}`).classList.toggle('active', tab === tabActiva);
     document.getElementById(`form-${tab}`).classList.toggle('oculto', tab !== tabActiva);
   });
@@ -360,6 +411,8 @@ function activarTabLobby(tabActiva) {
 document.getElementById('tab-crear').addEventListener('click', () => activarTabLobby('crear'));
 document.getElementById('tab-unirse').addEventListener('click', () => activarTabLobby('unirse'));
 document.getElementById('tab-maquina').addEventListener('click', () => activarTabLobby('maquina'));
+document.getElementById('tab-entrenar').addEventListener('click', () => activarTabLobby('entrenar'));
+document.getElementById('tab-legendario').addEventListener('click', () => activarTabLobby('legendario'));
 
 document.getElementById('btn-crear').addEventListener('click', async () => {
   const nombre = document.getElementById('nombre-crear').value.trim();
@@ -468,13 +521,132 @@ document.getElementById('btn-jugar-maquina').addEventListener('click', async () 
   document.getElementById('estado-sala-config').textContent = 'La máquina ya eligió su número.';
   manejarCambioEstado();
 });
-// ===== Configuración del número secreto =====
+
+document.getElementById('btn-entrenar').addEventListener('click', () => {
+  const nombre = document.getElementById('nombre-entrenar').value.trim();
+  if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
+
+  miNombre = nombre;
+  miRol = 'jugador_1';
+  miSala = ENTRENAMIENTO_SALA_ID;
+  LS.setItem('nombre', nombre);
+  LS.setItem('rol', miRol);
+  LS.setItem('salaId', miSala);
+  limpiarDescartesActuales();
+
+  datosSala = {
+    estado: 'jugando',
+    modo: 'entrenamiento',
+    local: true,
+    salaId: miSala,
+    turno: 'jugador_1',
+    ronda: 1,
+    ganador: null,
+    jugador_1: { id: jugadorId, nombre, secreto: null, intentos: [] },
+    jugador_2: { id: 'sistema', nombre: 'Sistema', secreto: generarNumeroSecreto(), intentos: [], listo: true }
+  };
+  guardarPartidaLocal();
+  mostrarPantalla('juego');
+  manejarCambioEstado();
+});
+
+// Modo Legendario (local contra máquina)
+document.getElementById('btn-legendario-maquina').addEventListener('click', () => {
+  const nombre = document.getElementById('nombre-legendario').value.trim();
+  const dificultad = document.getElementById('dificultad-legendario').value;
+  if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
+
+  leyendaRevisionActivada = false;   // nueva partida
+  miNombre = nombre;
+  miRol = 'jugador_1';
+  miSala = LEGENDARIO_SALA_ID;
+  LS.setItem('nombre', nombre);
+  LS.setItem('rol', miRol);
+  LS.setItem('salaId', miSala);
+  limpiarDescartesActuales();
+
+  const secretoComun = generarNumeroSecreto();
+  datosSala = {
+    estado: 'jugando',
+    modo: 'legendario',
+    local: true,
+    salaId: miSala,
+    turno: 'jugador_1',
+    ronda: 1,
+    ganador: null,
+    dificultadMaquina: dificultad,
+    secretoComun,
+    jugador_1: { id: jugadorId, nombre, intentos: [] },
+    jugador_2: {
+      id: BOT_ID,
+      nombre: `Máquina Legendaria (${NOMBRES_DIFICULTAD[dificultad]})`,
+      intentos: [],
+      conectado: true,
+      listo: true
+    }
+  };
+  guardarPartidaLocal();
+  mostrarPantalla('juego');
+  manejarCambioEstado();
+});
+
+// Modo Legendario online (crear sala para amigo)
+document.getElementById('btn-legendario-amigo').addEventListener('click', async () => {
+  const nombre = document.getElementById('nombre-legendario').value.trim();
+  if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) return mostrarError('error-lobby', 'Necesitás conexión para crear una sala legendaria.');
+
+  const { ref, set } = firebase;
+  const salaId = generarCodigoSala();
+  leyendaRevisionActivada = false;   // nueva partida
+  miNombre = nombre;
+  miRol = 'jugador_1';
+  miSala = salaId;
+  LS.setItem('nombre', nombre);
+  LS.setItem('rol', miRol);
+  LS.setItem('salaId', salaId);
+  limpiarDescartesActuales();
+
+  const secretoComun = generarNumeroSecreto();
+  const salaRef = ref(db, `partidas/${salaId}`);
+  await set(salaRef, {
+    estado: 'esperando',
+    modo: 'legendario',
+    creadorId: jugadorId,
+    turno: 'jugador_1',
+    ronda: 1,
+    ganador: null,
+    secretoComun,
+    jugador_1: { id: jugadorId, nombre, intentos: [], conectado: true, listo: false },
+    jugador_2: { id: null, nombre: '', intentos: [], conectado: false, listo: false }
+  });
+  iniciarEscuchaSala(salaId);
+  mostrarPantalla('config');
+  document.getElementById('sala-id-config').textContent = salaId;
+  document.getElementById('estado-sala-config').textContent = 'Sala legendaria. Esperando oponente...';
+});
+
+// ===== Ayuda =====
+btnAyuda.addEventListener('click', () => overlayAyuda.classList.remove('oculto'));
+btnCerrarAyuda.addEventListener('click', () => overlayAyuda.classList.add('oculto'));
+
+// ===== Configuración del número secreto (con auto‑listo para máquina) =====
 document.getElementById('btn-confirmar-secreto').addEventListener('click', async () => {
   const digitos = obtenerDigitosDeInputs('secreto-inputs');
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-secreto', error);
 
   if (esPartidaLocal()) {
+    if (esModoMaquina()) {
+      datosSala[miRol].secreto = digitos;
+      datosSala[miRol].listo = true;
+      datosSala.estado = 'jugando';
+      datosSala.turno = 'jugador_1';
+      guardarPartidaLocal();
+      manejarCambioEstado();
+      return;
+    }
     aplicarCambiosLocales({
       [`${miRol}/secreto`]: digitos,
       [`${miRol}/listo`]: false
@@ -488,7 +660,7 @@ document.getElementById('btn-confirmar-secreto').addEventListener('click', async
   await update(ref(db, `partidas/${miSala}/${miRol}`), { secreto: digitos, listo: false });
 });
 
-// ===== Botón "Listo" =====
+// ===== Botón "Listo" (solo para partidas humanas) =====
 document.getElementById('btn-listo').addEventListener('click', async () => {
   if (esPartidaLocal()) {
     datosSala[miRol].listo = true;
@@ -513,10 +685,12 @@ document.getElementById('btn-listo').addEventListener('click', async () => {
   }
 });
 
-// ===== Abandonar sala =====
-document.getElementById('btn-abandonar-config').addEventListener('click', async () => {
+// ===== Abandonar =====
+async function abandonarPartidaActual() {
   if (esPartidaLocal()) {
     LS.removeItem(LOCAL_MACHINE_KEY);
+    LS.removeItem(ENTRENAMIENTO_KEY);
+    LS.removeItem(LEGENDARIO_KEY);
     resetearApp();
     return;
   }
@@ -536,8 +710,12 @@ document.getElementById('btn-abandonar-config').addEventListener('click', async 
     });
   }
   resetearApp();
-});
-// ===== Juego: Enviar intento =====
+}
+
+document.getElementById('btn-abandonar-config').addEventListener('click', abandonarPartidaActual);
+btnAbandonarJuego.addEventListener('click', abandonarPartidaActual);
+
+// ===== Juego: Enviar intento (soporta legendario) =====
 async function registrarIntento(rol, digitos) {
   if (!miSala) return false;
 
@@ -559,13 +737,23 @@ async function registrarIntento(rol, digitos) {
   }
 
   const estado = sala.estado;
-  if ((estado !== 'jugando' && estado !== 'ultima_chance') || sala.turno !== rol) return false;
+  const esEntrenamiento = esModoEntrenamiento(sala);
+  const esLegendario = esModoLegendario(sala);
+  if (!esEntrenamiento && !esLegendario && (estado !== 'jugando' && estado !== 'ultima_chance') || sala.turno !== rol) return false;
 
-  const oponenteRol = obtenerRolOponente(rol);
-  const secretoOponente = sala[oponenteRol]?.secreto;
-  if (!secretoOponente) return false;
+  let secretoObjetivo = null;
+  if (esLegendario) {
+    secretoObjetivo = sala.secretoComun;
+  } else if (esEntrenamiento) {
+    secretoObjetivo = sala.jugador_2.secreto;
+  } else {
+    const oponenteRol = obtenerRolOponente(rol);
+    secretoObjetivo = sala[oponenteRol]?.secreto;
+  }
 
-  const { buenos, regulares } = calcularBuenosRegulares(secretoOponente, digitos);
+  if (!secretoObjetivo) return false;
+
+  const { buenos, regulares } = calcularBuenosRegulares(secretoObjetivo, digitos);
   const intentos = obtenerIntentos(sala, rol);
   intentos.push({ numero: digitos, buenos, regulares });
 
@@ -574,7 +762,29 @@ async function registrarIntento(rol, digitos) {
   };
 
   if (buenos === 4) {
-    if (rol === 'jugador_1') {
+    if (esEntrenamiento) {
+      cambios.estado = 'terminado';
+      cambios.ganador = 'jugador_1';
+    } else if (esLegendario) {
+      // en legendario, quien acierta gana, misma lógica de ronda
+      if (rol === 'jugador_1') {
+        const rondaActual = sala.ronda || 1;
+        const intentosOp = obtenerIntentos(sala, 'jugador_2').length;
+        if (intentosOp < rondaActual) {
+          cambios.estado = 'ultima_chance';
+          cambios.turno = 'jugador_2';
+        } else {
+          cambios.estado = 'terminado';
+          cambios.ganador = 'jugador_1';
+        }
+      } else if (estado === 'ultima_chance') {
+        cambios.estado = 'terminado';
+        cambios.ganador = 'empate';
+      } else {
+        cambios.estado = 'terminado';
+        cambios.ganador = 'jugador_2';
+      }
+    } else if (rol === 'jugador_1') {
       const rondaActual = sala.ronda || 1;
       const intentosJ2 = obtenerIntentos(sala, 'jugador_2').length;
       if (intentosJ2 < rondaActual) {
@@ -591,11 +801,15 @@ async function registrarIntento(rol, digitos) {
       cambios.estado = 'terminado';
       cambios.ganador = 'jugador_2';
     }
+  } else if (esEntrenamiento || esLegendario) {
+    cambios.turno = obtenerRolOponente(rol);
+    cambios.ronda = rol === 'jugador_2' ? (sala.ronda || 1) + 1 : (sala.ronda || 1);
+    cambios.estado = 'jugando';
   } else if (estado === 'ultima_chance') {
     cambios.estado = 'terminado';
-    cambios.ganador = oponenteRol;
+    cambios.ganador = obtenerRolOponente(rol);
   } else {
-    cambios.turno = oponenteRol;
+    cambios.turno = obtenerRolOponente(rol);
     cambios.ronda = rol === 'jugador_2' ? (sala.ronda || 1) + 1 : (sala.ronda || 1);
     cambios.estado = 'jugando';
   }
@@ -608,6 +822,7 @@ async function registrarIntento(rol, digitos) {
   }
   return true;
 }
+
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
   if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol) {
     return mostrarError('error-intento', 'No es tu turno.');
@@ -621,7 +836,7 @@ document.getElementById('btn-enviar-intento').addEventListener('click', async ()
 });
 
 function programarJugadaMaquina() {
-  if (!esModoMaquina() || miRol !== 'jugador_1') return;
+  if ((!esModoMaquina() && !esModoLegendario()) || miRol !== 'jugador_1') return;
   if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance')) return;
   if (datosSala.turno !== 'jugador_2') return;
 
@@ -654,7 +869,7 @@ function programarJugadaMaquina() {
         salaActual = snap.val();
       }
 
-      if (!esModoMaquina(salaActual) || salaActual.turno !== 'jugador_2') return;
+      if ((!esModoMaquina(salaActual) && !esModoLegendario(salaActual)) || salaActual.turno !== 'jugador_2') return;
       if (salaActual.estado !== 'jugando' && salaActual.estado !== 'ultima_chance') return;
 
       const intento = elegirIntentoMaquina(salaActual);
@@ -668,6 +883,7 @@ function programarJugadaMaquina() {
     }
   }, demora);
 }
+
 // ===== Escucha de cambios en la sala =====
 async function iniciarEscuchaSala(salaId) {
   if (listenerSala) listenerSala();
@@ -691,6 +907,7 @@ async function iniciarEscuchaSala(salaId) {
     manejarCambioEstado();
   });
 }
+
 function manejarCambioEstado() {
   const estado = datosSala.estado;
   document.getElementById('sala-id-config').textContent = miSala;
@@ -706,19 +923,24 @@ function manejarCambioEstado() {
     const espera = document.getElementById('estado-sala-config');
     if (estado === 'esperando') espera.textContent = 'Esperando oponente...';
     else if (esModoMaquina()) espera.textContent = 'La máquina ya eligió su número. Configurá el tuyo.';
+    else if (esModoLegendario()) espera.textContent = 'Sala legendaria. ¡Ambos comparten el mismo número!';
     else espera.textContent = '¡Oponente conectado! Configurá tu número.';
 
     const miData = datosSala[miRol];
     if (miData && miData.secreto) {
       document.getElementById('btn-confirmar-secreto').disabled = true;
       document.getElementById('btn-confirmar-secreto').textContent = '✅ Número guardado';
-      document.getElementById('seccion-listo').classList.remove('oculto');
-      if (miData.listo) {
-        document.getElementById('btn-listo').disabled = true;
-        document.getElementById('btn-listo').textContent = '✅ Listo ✓';
+      if (!esModoMaquina() && !esModoLegendario()) {
+        document.getElementById('seccion-listo').classList.remove('oculto');
+        if (miData.listo) {
+          document.getElementById('btn-listo').disabled = true;
+          document.getElementById('btn-listo').textContent = '✅ Listo ✓';
+        } else {
+          document.getElementById('btn-listo').disabled = false;
+          document.getElementById('btn-listo').textContent = '✅ ¡Listo!';
+        }
       } else {
-        document.getElementById('btn-listo').disabled = false;
-        document.getElementById('btn-listo').textContent = '✅ ¡Listo!';
+        document.getElementById('seccion-listo').classList.add('oculto');
       }
     } else {
       document.getElementById('btn-confirmar-secreto').disabled = false;
@@ -747,17 +969,32 @@ function renderizarJuego() {
   const turno = datosSala.turno;
   const ronda = datosSala.ronda || 1;
   const contraMaquina = esModoMaquina();
+  const entrenamiento = esModoEntrenamiento();
+  const legendario = esModoLegendario();
 
-  document.getElementById('ronda-badge').textContent = `Ronda ${ronda}`;
+  document.getElementById('ronda-badge').textContent = entrenamiento ? 'Entrenando' : `Ronda ${ronda}`;
   btnVerResultado.classList.toggle('oculto', estado !== 'terminado');
   renderizarDescartes();
+
+  // En Legendario, el panel oponente se oculta salvo que la partida esté terminada y se haya activado la revisión
+  const ocultarPanelLegendario = legendario && !(estado === 'terminado' && leyendaRevisionActivada);
+  juegoLayoutContainer.classList.toggle('entrenamiento', entrenamiento);
+  juegoLayoutContainer.classList.toggle('legendario', ocultarPanelLegendario);
 
   const turnoInd = document.getElementById('indicador-turno');
   const turnoTexto = document.getElementById('turno-texto');
   const turnoIcono = document.getElementById('turno-icono');
   turnoInd.classList.remove('mi-turno', 'su-turno', 'ultima');
 
-  if (estado === 'ultima_chance') {
+  if (entrenamiento) {
+    turnoInd.classList.add('mi-turno');
+    turnoTexto.textContent = '🎯 Adiviná el número secreto';
+    turnoIcono.textContent = '🧠';
+  } else if (legendario) {
+    turnoInd.classList.add(turno === miRol ? 'mi-turno' : 'su-turno');
+    turnoTexto.textContent = turno === miRol ? '⚔️ ¡Tu turno! Adiviná el número común' : '⏳ Tu oponente está pensando...';
+    turnoIcono.textContent = turno === miRol ? '🔮' : '⏰';
+  } else if (estado === 'ultima_chance') {
     turnoInd.classList.add('ultima');
     turnoTexto.textContent = (turno === miRol) ? '⚠️ ¡ÚLTIMA CHANCE! ¡Adiviná YA!' : (contraMaquina ? '⏳ La máquina tiene la última chance...' : '⏳ Tu oponente tiene la última chance...');
     turnoIcono.textContent = (turno === miRol) ? '🔥' : '😰';
@@ -771,8 +1008,12 @@ function renderizarJuego() {
     turnoIcono.textContent = contraMaquina ? '🤖' : '🤔';
   }
 
-  const iconoOponente = contraMaquina ? '🤖' : '🤔';
-  document.getElementById('nombre-oponente').textContent = oponenteData?.nombre ? `${iconoOponente} ${oponenteData.nombre}` : `${iconoOponente} Oponente`;
+  if (!entrenamiento) {
+    const iconoOponente = contraMaquina ? '🤖' : legendario ? '🛡️' : '🤔';
+    document.getElementById('nombre-oponente').textContent = oponenteData?.nombre ? `${iconoOponente} ${oponenteData.nombre}` : `${iconoOponente} Oponente`;
+  } else {
+    document.getElementById('nombre-oponente').textContent = '';
+  }
 
   const listaPropia = document.getElementById('lista-propia');
   listaPropia.innerHTML = '';
@@ -785,35 +1026,49 @@ function renderizarJuego() {
 
   const listaOponente = document.getElementById('lista-oponente');
   listaOponente.innerHTML = '';
-  obtenerIntentos(datosSala, oponenteRol).forEach((int, idx) => {
-    const fila = document.createElement('div');
-    fila.className = 'historial-fila';
-    fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
-    listaOponente.appendChild(fila);
-  });
+  // Mostrar intentos del oponente SOLO si no es entrenamiento y (no es legendario o se activó la revisión)
+  if (!entrenamiento && !(legendario && !(estado === 'terminado' && leyendaRevisionActivada))) {
+    obtenerIntentos(datosSala, oponenteRol).forEach((int, idx) => {
+      const fila = document.createElement('div');
+      fila.className = 'historial-fila';
+      fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
+      listaOponente.appendChild(fila);
+    });
+  }
 
   const inputContainer = document.getElementById('input-intento-container');
   const aviso = document.getElementById('aviso-turno-propio');
-  if (estado === 'terminado') {
-    inputContainer.classList.add('deshabilitado');
-    aviso.textContent = 'Juego terminado. Podés revisar el historial.';
-  } else if (turno === miRol && (estado === 'jugando' || estado === 'ultima_chance')) {
-    inputContainer.classList.remove('deshabilitado');
-    aviso.textContent = estado === 'ultima_chance' ? '🔥 ¡Es ahora o nunca!' : 'Ingresá 4 dígitos sin repetir:';
-    document.getElementById('btn-enviar-intento').textContent = estado === 'ultima_chance' ? '¡Disparo final!' : 'Enviar intento';
+  if (entrenamiento) {
+    if (estado === 'terminado') {
+      inputContainer.classList.add('deshabilitado');
+      aviso.textContent = '¡Felicitaciones! Revisá el historial.';
+    } else {
+      inputContainer.classList.remove('deshabilitado');
+      aviso.textContent = 'Ingresá 4 dígitos sin repetir:';
+      document.getElementById('btn-enviar-intento').textContent = 'Enviar intento';
+    }
   } else {
-    inputContainer.classList.add('deshabilitado');
-    aviso.textContent = 'Esperando tu turno...';
+    if (estado === 'terminado') {
+      inputContainer.classList.add('deshabilitado');
+      aviso.textContent = 'Juego terminado. Podés revisar el historial.';
+    } else if (turno === miRol && (estado === 'jugando' || estado === 'ultima_chance')) {
+      inputContainer.classList.remove('deshabilitado');
+      aviso.textContent = estado === 'ultima_chance' ? '🔥 ¡Es ahora o nunca!' : 'Ingresá 4 dígitos sin repetir:';
+      document.getElementById('btn-enviar-intento').textContent = estado === 'ultima_chance' ? '¡Disparo final!' : 'Enviar intento';
+    } else {
+      inputContainer.classList.add('deshabilitado');
+      aviso.textContent = 'Esperando tu turno...';
+    }
   }
 
   const pensando = document.getElementById('pensando-oponente');
-  if (estado !== 'terminado' && turno === oponenteRol) {
-    pensando.textContent = contraMaquina ? '💭 Calculando...' : '💭 Pensando...';
+  if (!entrenamiento && estado !== 'terminado' && turno === oponenteRol) {
+    pensando.textContent = contraMaquina ? '💭 Calculando...' : legendario ? '💭 Tu oponente descifra el mismo número...' : '💭 Pensando...';
   } else {
     pensando.textContent = '';
   }
 
-  if (estado === 'ultima_chance' && turno === miRol) {
+  if (!entrenamiento && estado === 'ultima_chance' && turno === miRol) {
     overlayUltimaChance.classList.remove('oculto');
     document.getElementById('ultima-chance-titulo').textContent = '⚠️ ¡Última Chance!';
     const nombreOponente = miRol === 'jugador_1' ? datosSala.jugador_2?.nombre : datosSala.jugador_1?.nombre;
@@ -831,12 +1086,35 @@ function mostrarResultadoFinal(forzar = false) {
   const detalle = document.getElementById('resultado-detalle');
   const secretos = document.getElementById('resultado-secretos');
   const contraMaquina = esModoMaquina();
+  const entrenamiento = esModoEntrenamiento();
+  const legendario = esModoLegendario();
 
   const miSecreto = datosSala[miRol]?.secreto || '????';
   const opRol = obtenerRolOponente(miRol);
-  const opSecreto = datosSala[opRol]?.secreto || '????';
+  const opSecreto = legendario ? datosSala.secretoComun : (datosSala[opRol]?.secreto || '????');
 
-  if (ganador === miRol) {
+  if (entrenamiento) {
+    titulo.textContent = '🎉 ¡Acertaste!';
+    titulo.style.color = 'var(--exito)';
+    const totalIntentos = obtenerIntentos(datosSala, miRol).length;
+    detalle.textContent = `Descubriste el número en ${totalIntentos} intento${totalIntentos !== 1 ? 's' : ''}.`;
+    secretos.textContent = `El número era: ${opSecreto}`;
+  } else if (legendario) {
+    if (ganador === miRol) {
+      titulo.textContent = '🎉 ¡Ganaste!';
+      titulo.style.color = 'var(--exito)';
+      detalle.textContent = 'Descifraste el número legendario antes que tu oponente.';
+    } else if (ganador === 'empate') {
+      titulo.textContent = '🤝 ¡Empate!';
+      titulo.style.color = 'var(--bueno)';
+      detalle.textContent = 'Ambos descifraron el número legendario en la misma ronda.';
+    } else {
+      titulo.textContent = '😞 Perdiste';
+      titulo.style.color = 'var(--error)';
+      detalle.textContent = 'Tu oponente descifró el número legendario primero.';
+    }
+    secretos.textContent = `El número legendario era: ${datosSala.secretoComun}`;
+  } else if (ganador === miRol) {
     titulo.textContent = '🎉 ¡Ganaste!';
     titulo.style.color = 'var(--exito)';
     detalle.textContent = contraMaquina ? 'Descifraste el número de la máquina.' : 'Descifraste el número de tu oponente.';
@@ -849,17 +1127,82 @@ function mostrarResultadoFinal(forzar = false) {
     titulo.style.color = 'var(--error)';
     detalle.textContent = contraMaquina ? 'La máquina descifró tu número primero.' : 'Tu oponente descifró tu número primero.';
   }
-  secretos.textContent = `Tu número: ${miSecreto} | Su número: ${opSecreto}`;
+
+  if (!entrenamiento && !legendario) {
+    secretos.textContent = `Tu número: ${miSecreto} | Su número: ${opSecreto}`;
+  }
 
   document.getElementById('btn-ver-partida').onclick = () => {
     revisandoPartidaTerminada = true;
     overlay.classList.add('oculto');
+    // Activar revisión en Legendario para que se muestre el panel del oponente
+    if (esModoLegendario()) {
+      leyendaRevisionActivada = true;
+      renderizarJuego();   // ahora se verán los intentos del oponente
+    }
     btnVerResultado.focus();
   };
 
+  document.getElementById('btn-revancha').classList.toggle('oculto', entrenamiento);
   document.getElementById('btn-revancha').onclick = async () => {
     revisandoPartidaTerminada = false;
     overlay.classList.add('oculto');
+
+    if (entrenamiento) {
+      const nuevoSecreto = generarNumeroSecreto();
+      datosSala.estado = 'jugando';
+      datosSala.ronda = 1;
+      datosSala.ganador = null;
+      datosSala.jugador_1.intentos = [];
+      datosSala.jugador_2.secreto = nuevoSecreto;
+      guardarPartidaLocal();
+      limpiarInputs('intento-inputs');
+      limpiarDescartesActuales();
+      mostrarPantalla('juego');
+      manejarCambioEstado();
+      return;
+    }
+
+    if (legendario) {
+      leyendaRevisionActivada = false;   // nueva partida
+      // Revancha legendario local
+      if (esPartidaLocal()) {
+        const nuevoSecreto = generarNumeroSecreto();
+        datosSala.estado = 'jugando';
+        datosSala.ronda = 1;
+        datosSala.ganador = null;
+        datosSala.secretoComun = nuevoSecreto;
+        datosSala.jugador_1.intentos = [];
+        datosSala.jugador_2.intentos = [];
+        guardarPartidaLocal();
+        limpiarInputs('intento-inputs');
+        limpiarDescartesActuales();
+        mostrarPantalla('juego');
+        manejarCambioEstado();
+        return;
+      } else {
+        // Revancha legendario online
+        const firebase = await cargarFirebase().catch(() => null);
+        if (!firebase) return mostrarError('error-intento', 'Necesitás conexión para pedir revancha online.');
+        const { ref, update } = firebase;
+        const nuevoSecreto = generarNumeroSecreto();
+        await update(ref(db, `partidas/${miSala}`), {
+          estado: 'jugando',
+          turno: 'jugador_1',
+          ronda: 1,
+          ganador: null,
+          secretoComun: nuevoSecreto,
+          'jugador_1/intentos': [],
+          'jugador_2/intentos': []
+        });
+        mostrarPantalla('juego');
+        limpiarInputs('intento-inputs');
+        limpiarDescartesActuales();
+        manejarCambioEstado();
+        return;
+      }
+    }
+
     const cambios = {
       estado: 'configurando',
       turno: 'jugador_1',
@@ -922,11 +1265,10 @@ descartesDigitos.addEventListener('click', (e) => {
   const boton = e.target.closest('.descarte-btn');
   if (!boton || !descartesDigitos.contains(boton)) return;
 
-  const descartes = cargarDescartes();
   const digito = boton.dataset.digito;
-  if (descartes.has(digito)) descartes.delete(digito);
-  else descartes.add(digito);
-
+  const descartes = cargarDescartes();
+  const actual = descartes[digito] || 0;
+  descartes[digito] = (actual + 1) % 3;
   guardarDescartes(descartes);
   renderizarDescartes();
 });
@@ -957,6 +1299,7 @@ function resetearApp() {
   botTurnoEnProceso = false;
   ultimoTurnoBot = null;
   revisandoPartidaTerminada = false;
+  leyendaRevisionActivada = false;   // reseteamos
   limpiarDescartesActuales();
   datosSala = null;
   miSala = null;
@@ -964,6 +1307,8 @@ function resetearApp() {
   LS.removeItem('salaId');
   LS.removeItem('rol');
   LS.removeItem(LOCAL_MACHINE_KEY);
+  LS.removeItem(ENTRENAMIENTO_KEY);
+  LS.removeItem(LEGENDARIO_KEY);
   mostrarPantalla('lobby');
   limpiarInputs('secreto-inputs');
   limpiarInputs('intento-inputs');
@@ -974,21 +1319,34 @@ function resetearApp() {
   overlayUltimaChance.classList.add('oculto');
   overlayResultado.classList.add('oculto');
   btnVerResultado.classList.add('oculto');
+  juegoLayoutContainer.classList.remove('entrenamiento');
 }
 
 // ===== Reconexión al cargar =====
 prepararJuegoOffline();
 
 const partidaLocal = cargarPartidaLocal();
-if (miSala === LOCAL_SALA_ID && miRol && miNombre && partidaLocal) {
+if (miSala === ENTRENAMIENTO_SALA_ID && miRol && miNombre && partidaLocal && partidaLocal.modo === 'entrenamiento') {
+  document.getElementById('nombre-entrenar').value = miNombre;
+  datosSala = partidaLocal;
+  mostrarPantalla('juego');
+  manejarCambioEstado();
+} else if (miSala === LOCAL_SALA_ID && miRol && miNombre && partidaLocal) {
   document.getElementById('nombre-maquina').value = miNombre;
   datosSala = partidaLocal;
   mostrarPantalla(partidaLocal.estado === 'jugando' || partidaLocal.estado === 'ultima_chance' || partidaLocal.estado === 'terminado' ? 'juego' : 'config');
+  manejarCambioEstado();
+} else if (miSala === LEGENDARIO_SALA_ID && miRol && miNombre && partidaLocal && partidaLocal.modo === 'legendario') {
+  document.getElementById('nombre-legendario').value = miNombre;
+  datosSala = partidaLocal;
+  mostrarPantalla('juego');
   manejarCambioEstado();
 } else if (miSala && miRol && miNombre) {
   document.getElementById('nombre-crear').value = miNombre;
   document.getElementById('nombre-unirse').value = miNombre;
   document.getElementById('nombre-maquina').value = miNombre;
+  document.getElementById('nombre-entrenar').value = miNombre;
+  document.getElementById('nombre-legendario').value = miNombre;
   iniciarEscuchaSala(miSala);
   mostrarPantalla('config');
   document.getElementById('sala-id-config').textContent = miSala;
