@@ -1,4 +1,4 @@
-const CACHE_NAME = 'numeritos-v2';
+const CACHE_NAME = 'numeritos-v3';
 const ASSETS = [
   './index.html',
   './styles.css',

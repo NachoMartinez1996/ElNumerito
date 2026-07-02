@@ -1,7 +1,3 @@
-// ===== Firebase =====
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
-import { getDatabase, ref, set, update, onValue, get } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js";
-
 const firebaseConfig = {
   apiKey: "AIzaSyCOLLXFxys_peIkzRY1gdpstkV67O5u1DQ",
   authDomain: "elnumerito.firebaseapp.com",
@@ -13,8 +9,8 @@ const firebaseConfig = {
   measurementId: "G-N4LNQL9KM1"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+let db = null;
+let firebaseApi = null;
 
 // ===== Estado Local =====
 const LS = window.localStorage;
@@ -29,7 +25,11 @@ let listenerSala = null;
 let botTimer = null;
 let botTurnoEnProceso = false;
 let ultimoTurnoBot = null;
+let revisandoPartidaTerminada = false;
 
+const LOCAL_SALA_ID = 'LOCAL';
+const LOCAL_MACHINE_KEY = 'partidaMaquinaLocal';
+const DIGITOS_DESCARTE = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const BOT_ID = 'maquina';
 const NOMBRES_DIFICULTAD = {
   facil: 'Máquina fácil',
@@ -46,6 +46,9 @@ const pantallas = {
 };
 const overlayUltimaChance = document.getElementById('overlay-ultima-chance');
 const overlayResultado = document.getElementById('overlay-resultado');
+const btnVerResultado = document.getElementById('btn-ver-resultado');
+const descartesDigitos = document.getElementById('descartes-digitos');
+const avisoOffline = document.getElementById('offline-aviso');
 
 // ===== Utilidades =====
 function generarId() {
@@ -64,6 +67,161 @@ function mostrarPantalla(nombre) {
 function mostrarError(elId, msg) {
   const el = document.getElementById(elId);
   if (el) { el.textContent = msg; setTimeout(() => { el.textContent = ''; }, 4000); }
+}
+
+async function cargarFirebase() {
+  if (firebaseApi) return firebaseApi;
+  if (!navigator.onLine) throw new Error('Sin conexión para partidas online.');
+
+  const [{ initializeApp }, databaseModule] = await Promise.all([
+    import('https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js'),
+    import('https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js')
+  ]);
+
+  const app = initializeApp(firebaseConfig);
+  db = databaseModule.getDatabase(app);
+  firebaseApi = {
+    ref: databaseModule.ref,
+    set: databaseModule.set,
+    update: databaseModule.update,
+    onValue: databaseModule.onValue,
+    get: databaseModule.get
+  };
+  return firebaseApi;
+}
+
+function esPartidaLocal(sala = datosSala) {
+  return Boolean(sala?.local);
+}
+
+function guardarPartidaLocal() {
+  if (!esPartidaLocal()) return;
+  LS.setItem(LOCAL_MACHINE_KEY, JSON.stringify(datosSala));
+}
+
+function cargarPartidaLocal() {
+  try {
+    const guardada = JSON.parse(LS.getItem(LOCAL_MACHINE_KEY) || 'null');
+    return esPartidaLocal(guardada) ? guardada : null;
+  } catch {
+    return null;
+  }
+}
+
+function aplicarCambioAnidado(obj, ruta, valor) {
+  const partes = ruta.split('/');
+  let actual = obj;
+  partes.slice(0, -1).forEach(parte => {
+    if (!actual[parte] || typeof actual[parte] !== 'object') actual[parte] = {};
+    actual = actual[parte];
+  });
+  actual[partes[partes.length - 1]] = valor;
+}
+
+function aplicarCambiosLocales(cambios) {
+  Object.entries(cambios).forEach(([ruta, valor]) => aplicarCambioAnidado(datosSala, ruta, valor));
+  guardarPartidaLocal();
+  manejarCambioEstado();
+}
+
+function actualizarAvisoOffline(estado = {}) {
+  if (!avisoOffline) return;
+
+  avisoOffline.classList.remove('pendiente', 'sin-conexion');
+  const offlineListo = estado.listo ?? LS.getItem('offlineListo') === '1';
+
+  if (!navigator.onLine && offlineListo) {
+    avisoOffline.textContent = 'Sin conexión: podés jugar contra la máquina.';
+    return;
+  }
+
+  if (!navigator.onLine) {
+    avisoOffline.textContent = 'Sin conexión: abrí la app una vez online para activar el modo offline.';
+    avisoOffline.classList.add('sin-conexion');
+    return;
+  }
+
+  if (offlineListo) {
+    avisoOffline.textContent = 'Modo máquina disponible sin conexión.';
+    return;
+  }
+
+  avisoOffline.textContent = 'Preparando juego sin conexión...';
+  avisoOffline.classList.add('pendiente');
+}
+
+async function prepararJuegoOffline() {
+  actualizarAvisoOffline();
+  window.addEventListener('online', () => actualizarAvisoOffline());
+  window.addEventListener('offline', () => actualizarAvisoOffline());
+
+  if (!('serviceWorker' in navigator)) {
+    avisoOffline.textContent = 'Tu navegador no permite guardar el juego sin conexión.';
+    avisoOffline.classList.add('sin-conexion');
+    return;
+  }
+
+  try {
+    const registroExistente = await navigator.serviceWorker.getRegistration();
+    if (registroExistente || navigator.serviceWorker.controller) {
+      LS.setItem('offlineListo', '1');
+      actualizarAvisoOffline({ listo: true });
+    }
+
+    await navigator.serviceWorker.register('./sw.js');
+    await navigator.serviceWorker.ready;
+    LS.setItem('offlineListo', '1');
+    actualizarAvisoOffline({ listo: true });
+  } catch {
+    if (LS.getItem('offlineListo') === '1') actualizarAvisoOffline({ listo: true });
+    else actualizarAvisoOffline({ listo: false });
+  }
+}
+
+function obtenerClaveDescartes() {
+  if (!miSala || !miRol) return null;
+  return `descartes:${jugadorId}:${miSala}:${miRol}`;
+}
+
+function cargarDescartes() {
+  const clave = obtenerClaveDescartes();
+  if (!clave) return new Set();
+
+  try {
+    const guardados = JSON.parse(LS.getItem(clave) || '[]');
+    return new Set(guardados.filter(digito => DIGITOS_DESCARTE.includes(digito)));
+  } catch {
+    return new Set();
+  }
+}
+
+function guardarDescartes(descartes) {
+  const clave = obtenerClaveDescartes();
+  if (!clave) return;
+  LS.setItem(clave, JSON.stringify([...descartes]));
+}
+
+function renderizarDescartes() {
+  if (!descartesDigitos) return;
+
+  const descartes = cargarDescartes();
+  descartesDigitos.innerHTML = '';
+  DIGITOS_DESCARTE.forEach(digito => {
+    const boton = document.createElement('button');
+    const tachado = descartes.has(digito);
+    boton.type = 'button';
+    boton.className = `descarte-btn${tachado ? ' tachado' : ''}`;
+    boton.dataset.digito = digito;
+    boton.setAttribute('aria-pressed', tachado ? 'true' : 'false');
+    boton.textContent = digito;
+    descartesDigitos.appendChild(boton);
+  });
+}
+
+function limpiarDescartesActuales() {
+  const clave = obtenerClaveDescartes();
+  if (clave) LS.removeItem(clave);
+  renderizarDescartes();
 }
 
 // ===== Validación de 4 dígitos sin repetir =====
@@ -206,6 +364,9 @@ document.getElementById('tab-maquina').addEventListener('click', () => activarTa
 document.getElementById('btn-crear').addEventListener('click', async () => {
   const nombre = document.getElementById('nombre-crear').value.trim();
   if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) return mostrarError('error-lobby', 'Necesitás conexión para crear una sala.');
+  const { ref, set } = firebase;
   const salaId = generarCodigoSala();
   miNombre = nombre;
   miRol = 'jugador_1';
@@ -213,6 +374,7 @@ document.getElementById('btn-crear').addEventListener('click', async () => {
   LS.setItem('nombre', nombre);
   LS.setItem('rol', miRol);
   LS.setItem('salaId', salaId);
+  limpiarDescartesActuales();
 
   const salaRef = ref(db, `partidas/${salaId}`);
   await set(salaRef, {
@@ -236,6 +398,10 @@ document.getElementById('btn-unirse').addEventListener('click', async () => {
   if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
   if (!codigo) return mostrarError('error-lobby', 'Ingresá el código de sala.');
 
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) return mostrarError('error-lobby', 'Necesitás conexión para unirte a una sala.');
+  const { ref, get, update } = firebase;
+
   const salaRef = ref(db, `partidas/${codigo}`);
   const snap = await get(salaRef);
   if (!snap.exists()) return mostrarError('error-lobby', 'Sala no encontrada.');
@@ -249,6 +415,7 @@ document.getElementById('btn-unirse').addEventListener('click', async () => {
   LS.setItem('nombre', nombre);
   LS.setItem('rol', miRol);
   LS.setItem('salaId', codigo);
+  limpiarDescartesActuales();
 
   await update(salaRef, {
     'jugador_2': { id: jugadorId, nombre, secreto: null, intentos: [], conectado: true, listo: false },
@@ -265,18 +432,20 @@ document.getElementById('btn-jugar-maquina').addEventListener('click', async () 
   const dificultad = document.getElementById('dificultad-maquina').value;
   if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
 
-  const salaId = generarCodigoSala();
+  const salaId = LOCAL_SALA_ID;
   miNombre = nombre;
   miRol = 'jugador_1';
   miSala = salaId;
   LS.setItem('nombre', nombre);
   LS.setItem('rol', miRol);
   LS.setItem('salaId', salaId);
+  limpiarDescartesActuales();
 
-  const salaRef = ref(db, `partidas/${salaId}`);
-  await set(salaRef, {
+  datosSala = {
     estado: 'configurando',
     modo: 'maquina',
+    local: true,
+    salaId,
     dificultadMaquina: dificultad,
     creadorId: jugadorId,
     turno: 'jugador_1',
@@ -291,29 +460,52 @@ document.getElementById('btn-jugar-maquina').addEventListener('click', async () 
       conectado: true,
       listo: true
     }
-  });
+  };
+  guardarPartidaLocal();
 
-  iniciarEscuchaSala(salaId);
   mostrarPantalla('config');
   document.getElementById('sala-id-config').textContent = salaId;
   document.getElementById('estado-sala-config').textContent = 'La máquina ya eligió su número.';
+  manejarCambioEstado();
 });
-
 // ===== Configuración del número secreto =====
 document.getElementById('btn-confirmar-secreto').addEventListener('click', async () => {
   const digitos = obtenerDigitosDeInputs('secreto-inputs');
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-secreto', error);
 
-  const miRef = ref(db, `partidas/${miSala}/${miRol}`);
-  await update(miRef, { secreto: digitos, listo: false });  // reinicia el listo al confirmar
-  // La interfaz se actualiza con el listener
+  if (esPartidaLocal()) {
+    aplicarCambiosLocales({
+      [`${miRol}/secreto`]: digitos,
+      [`${miRol}/listo`]: false
+    });
+    return;
+  }
+
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) return mostrarError('error-secreto', 'Necesitás conexión para jugar online.');
+  const { ref, update } = firebase;
+  await update(ref(db, `partidas/${miSala}/${miRol}`), { secreto: digitos, listo: false });
 });
 
 // ===== Botón "Listo" =====
 document.getElementById('btn-listo').addEventListener('click', async () => {
+  if (esPartidaLocal()) {
+    datosSala[miRol].listo = true;
+    if (datosSala.jugador_1.listo && datosSala.jugador_2.listo) {
+      datosSala.estado = 'jugando';
+      datosSala.turno = 'jugador_1';
+    }
+    guardarPartidaLocal();
+    manejarCambioEstado();
+    return;
+  }
+
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) return mostrarError('error-secreto', 'Necesitás conexión para jugar online.');
+  const { ref, update, get } = firebase;
   await update(ref(db, `partidas/${miSala}/${miRol}`), { listo: true });
-  // Verificar si ambos están listos
+
   const snap1 = await get(ref(db, `partidas/${miSala}/jugador_1/listo`));
   const snap2 = await get(ref(db, `partidas/${miSala}/jugador_2/listo`));
   if (snap1.val() && snap2.val()) {
@@ -323,11 +515,21 @@ document.getElementById('btn-listo').addEventListener('click', async () => {
 
 // ===== Abandonar sala =====
 document.getElementById('btn-abandonar-config').addEventListener('click', async () => {
+  if (esPartidaLocal()) {
+    LS.removeItem(LOCAL_MACHINE_KEY);
+    resetearApp();
+    return;
+  }
+
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) {
+    resetearApp();
+    return;
+  }
+  const { ref, set, update } = firebase;
   if (miRol === 'jugador_1') {
-    // El creador borra la sala
     await set(ref(db, `partidas/${miSala}`), null);
   } else {
-    // El invitado la deja libre
     await update(ref(db, `partidas/${miSala}`), {
       estado: 'esperando',
       'jugador_2': { id: null, nombre: '', secreto: null, intentos: [], conectado: false, listo: false }
@@ -335,15 +537,27 @@ document.getElementById('btn-abandonar-config').addEventListener('click', async 
   }
   resetearApp();
 });
-
 // ===== Juego: Enviar intento =====
 async function registrarIntento(rol, digitos) {
   if (!miSala) return false;
-  const salaRef = ref(db, `partidas/${miSala}`);
-  const snap = await get(salaRef);
-  if (!snap.exists()) return false;
 
-  const sala = snap.val();
+  let salaRef = null;
+  let sala = datosSala;
+  let firebase = null;
+
+  if (!esPartidaLocal()) {
+    firebase = await cargarFirebase().catch(() => null);
+    if (!firebase) {
+      mostrarError('error-intento', 'Necesitás conexión para jugar online.');
+      return false;
+    }
+    const { ref, get } = firebase;
+    salaRef = ref(db, `partidas/${miSala}`);
+    const snap = await get(salaRef);
+    if (!snap.exists()) return false;
+    sala = snap.val();
+  }
+
   const estado = sala.estado;
   if ((estado !== 'jugando' && estado !== 'ultima_chance') || sala.turno !== rol) return false;
 
@@ -386,10 +600,14 @@ async function registrarIntento(rol, digitos) {
     cambios.estado = 'jugando';
   }
 
-  await update(salaRef, cambios);
+  if (esPartidaLocal()) {
+    aplicarCambiosLocales(cambios);
+  } else {
+    const { update } = firebase;
+    await update(salaRef, cambios);
+  }
   return true;
 }
-
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
   if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol) {
     return mostrarError('error-intento', 'No es tu turno.');
@@ -425,9 +643,17 @@ function programarJugadaMaquina() {
   botTimer = setTimeout(async () => {
     try {
       if (!miSala) return;
-      const snap = await get(ref(db, `partidas/${miSala}`));
-      if (!snap.exists()) return;
-      const salaActual = snap.val();
+
+      let salaActual = datosSala;
+      if (!esPartidaLocal()) {
+        const firebase = await cargarFirebase().catch(() => null);
+        if (!firebase) return;
+        const { ref, get } = firebase;
+        const snap = await get(ref(db, `partidas/${miSala}`));
+        if (!snap.exists()) return;
+        salaActual = snap.val();
+      }
+
       if (!esModoMaquina(salaActual) || salaActual.turno !== 'jugador_2') return;
       if (salaActual.estado !== 'jugando' && salaActual.estado !== 'ultima_chance') return;
 
@@ -442,10 +668,19 @@ function programarJugadaMaquina() {
     }
   }, demora);
 }
-
 // ===== Escucha de cambios en la sala =====
-function iniciarEscuchaSala(salaId) {
+async function iniciarEscuchaSala(salaId) {
   if (listenerSala) listenerSala();
+  if (esPartidaLocal()) return;
+
+  const firebase = await cargarFirebase().catch(() => null);
+  if (!firebase) {
+    resetearApp();
+    mostrarError('error-lobby', 'Necesitás conexión para recuperar una sala online.');
+    return;
+  }
+
+  const { ref, onValue } = firebase;
   const salaRef = ref(db, `partidas/${salaId}`);
   listenerSala = onValue(salaRef, (snap) => {
     if (!snap.exists()) {
@@ -456,11 +691,15 @@ function iniciarEscuchaSala(salaId) {
     manejarCambioEstado();
   });
 }
-
 function manejarCambioEstado() {
   const estado = datosSala.estado;
   document.getElementById('sala-id-config').textContent = miSala;
   document.getElementById('sala-id-juego').textContent = miSala;
+
+  if (estado !== 'terminado') {
+    revisandoPartidaTerminada = false;
+    overlayResultado.classList.add('oculto');
+  }
 
   if (estado === 'esperando' || estado === 'configurando') {
     mostrarPantalla('config');
@@ -510,6 +749,8 @@ function renderizarJuego() {
   const contraMaquina = esModoMaquina();
 
   document.getElementById('ronda-badge').textContent = `Ronda ${ronda}`;
+  btnVerResultado.classList.toggle('oculto', estado !== 'terminado');
+  renderizarDescartes();
 
   const turnoInd = document.getElementById('indicador-turno');
   const turnoTexto = document.getElementById('turno-texto');
@@ -555,7 +796,7 @@ function renderizarJuego() {
   const aviso = document.getElementById('aviso-turno-propio');
   if (estado === 'terminado') {
     inputContainer.classList.add('deshabilitado');
-    aviso.textContent = 'Juego terminado.';
+    aviso.textContent = 'Juego terminado. Podés revisar el historial.';
   } else if (turno === miRol && (estado === 'jugando' || estado === 'ultima_chance')) {
     inputContainer.classList.remove('deshabilitado');
     aviso.textContent = estado === 'ultima_chance' ? '🔥 ¡Es ahora o nunca!' : 'Ingresá 4 dígitos sin repetir:';
@@ -580,7 +821,9 @@ function renderizarJuego() {
   }
 }
 
-function mostrarResultadoFinal() {
+function mostrarResultadoFinal(forzar = false) {
+  if (revisandoPartidaTerminada && !forzar) return;
+
   const ganador = datosSala.ganador;
   const overlay = overlayResultado;
   overlay.classList.remove('oculto');
@@ -608,7 +851,14 @@ function mostrarResultadoFinal() {
   }
   secretos.textContent = `Tu número: ${miSecreto} | Su número: ${opSecreto}`;
 
+  document.getElementById('btn-ver-partida').onclick = () => {
+    revisandoPartidaTerminada = true;
+    overlay.classList.add('oculto');
+    btnVerResultado.focus();
+  };
+
   document.getElementById('btn-revancha').onclick = async () => {
+    revisandoPartidaTerminada = false;
     overlay.classList.add('oculto');
     const cambios = {
       estado: 'configurando',
@@ -634,16 +884,25 @@ function mostrarResultadoFinal() {
     botTimer = null;
     botTurnoEnProceso = false;
 
-    await update(ref(db, `partidas/${miSala}`), cambios);
+    if (esPartidaLocal()) {
+      aplicarCambiosLocales(cambios);
+    } else {
+      const firebase = await cargarFirebase().catch(() => null);
+      if (!firebase) return mostrarError('error-intento', 'Necesitás conexión para pedir revancha online.');
+      const { ref, update } = firebase;
+      await update(ref(db, `partidas/${miSala}`), cambios);
+    }
     document.getElementById('btn-confirmar-secreto').disabled = false;
     document.getElementById('btn-confirmar-secreto').textContent = 'Confirmar número';
     document.getElementById('seccion-listo').classList.add('oculto');
     limpiarInputs('secreto-inputs');
     limpiarInputs('intento-inputs');
+    limpiarDescartesActuales();
     mostrarPantalla('config');
   };
 
   document.getElementById('btn-salir').onclick = () => {
+    revisandoPartidaTerminada = false;
     resetearApp();
     overlay.classList.add('oculto');
   };
@@ -651,6 +910,25 @@ function mostrarResultadoFinal() {
 
 document.getElementById('btn-cerrar-overlay').addEventListener('click', () => {
   overlayUltimaChance.classList.add('oculto');
+});
+
+btnVerResultado.addEventListener('click', () => {
+  if (!datosSala || datosSala.estado !== 'terminado') return;
+  revisandoPartidaTerminada = false;
+  mostrarResultadoFinal(true);
+});
+
+descartesDigitos.addEventListener('click', (e) => {
+  const boton = e.target.closest('.descarte-btn');
+  if (!boton || !descartesDigitos.contains(boton)) return;
+
+  const descartes = cargarDescartes();
+  const digito = boton.dataset.digito;
+  if (descartes.has(digito)) descartes.delete(digito);
+  else descartes.add(digito);
+
+  guardarDescartes(descartes);
+  renderizarDescartes();
 });
 
 // Navegación entre inputs de dígitos
@@ -678,11 +956,14 @@ function resetearApp() {
   botTimer = null;
   botTurnoEnProceso = false;
   ultimoTurnoBot = null;
+  revisandoPartidaTerminada = false;
+  limpiarDescartesActuales();
   datosSala = null;
   miSala = null;
   miRol = null;
   LS.removeItem('salaId');
   LS.removeItem('rol');
+  LS.removeItem(LOCAL_MACHINE_KEY);
   mostrarPantalla('lobby');
   limpiarInputs('secreto-inputs');
   limpiarInputs('intento-inputs');
@@ -692,10 +973,19 @@ function resetearApp() {
   document.getElementById('input-intento-container').classList.remove('deshabilitado');
   overlayUltimaChance.classList.add('oculto');
   overlayResultado.classList.add('oculto');
+  btnVerResultado.classList.add('oculto');
 }
 
 // ===== Reconexión al cargar =====
-if (miSala && miRol && miNombre) {
+prepararJuegoOffline();
+
+const partidaLocal = cargarPartidaLocal();
+if (miSala === LOCAL_SALA_ID && miRol && miNombre && partidaLocal) {
+  document.getElementById('nombre-maquina').value = miNombre;
+  datosSala = partidaLocal;
+  mostrarPantalla(partidaLocal.estado === 'jugando' || partidaLocal.estado === 'ultima_chance' || partidaLocal.estado === 'terminado' ? 'juego' : 'config');
+  manejarCambioEstado();
+} else if (miSala && miRol && miNombre) {
   document.getElementById('nombre-crear').value = miNombre;
   document.getElementById('nombre-unirse').value = miNombre;
   document.getElementById('nombre-maquina').value = miNombre;

@@ -51,6 +51,7 @@
       </div>
       <p id="error-lobby" class="error-msg"></p>
     </div>
+    <p id="offline-aviso" class="offline-aviso" role="status">Preparando juego sin conexión...</p>
     <p class="info-pie">Compartí el código con un amigo o jugá contra la máquina.</p>
   </main>
 
@@ -87,6 +88,7 @@
     <div class="top-bar">
       <span class="sala-badge">Sala: <strong id="sala-id-juego"></strong></span>
       <span id="ronda-badge" class="ronda-badge">Ronda 1</span>
+      <button id="btn-ver-resultado" class="btn-mini oculto" type="button">Ver resultado</button>
     </div>
     <div id="indicador-turno" class="turno-indicador">
       <span id="turno-texto"></span>
@@ -99,6 +101,10 @@
         <div class="historial" id="historial-propio">
           <div class="historial-header"><span>#</span><span>Número</span><span class="b">B</span><span class="r">R</span></div>
           <div id="lista-propia"></div>
+        </div>
+        <div class="descartes-panel">
+          <h4>Descartes</h4>
+          <div id="descartes-digitos" class="descartes-digitos" aria-label="Dígitos descartados"></div>
         </div>
         <div class="input-intento" id="input-intento-container">
           <p class="turno-aviso" id="aviso-turno-propio"></p>
@@ -139,6 +145,7 @@
       <h2 id="resultado-titulo"></h2>
       <p id="resultado-detalle"></p>
       <p id="resultado-secretos"></p>
+      <button id="btn-ver-partida" class="btn-secondary">Ver partida</button>
       <button id="btn-revancha" class="btn-primary">🔄 Revancha</button>
       <button id="btn-salir" class="btn-secondary">Salir</button>
     </div>
