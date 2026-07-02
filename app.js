@@ -27,7 +27,7 @@ let botTimer = null;
 let botTurnoEnProceso = false;
 let ultimoTurnoBot = null;
 let revisandoPartidaTerminada = false;
-let leyendaRevisionActivada = false;   // <-- NUEVO: activa la revisión del oponente en Legendario
+let leyendaRevisionActivada = false;
 
 const LOCAL_SALA_ID = 'LOCAL';
 const LOCAL_MACHINE_KEY = 'partidaMaquinaLocal';
@@ -556,7 +556,7 @@ document.getElementById('btn-legendario-maquina').addEventListener('click', () =
   const dificultad = document.getElementById('dificultad-legendario').value;
   if (!nombre) return mostrarError('error-lobby', 'Poné tu nombre.');
 
-  leyendaRevisionActivada = false;   // nueva partida
+  leyendaRevisionActivada = false;
   miNombre = nombre;
   miRol = 'jugador_1';
   miSala = LEGENDARIO_SALA_ID;
@@ -599,7 +599,7 @@ document.getElementById('btn-legendario-amigo').addEventListener('click', async 
 
   const { ref, set } = firebase;
   const salaId = generarCodigoSala();
-  leyendaRevisionActivada = false;   // nueva partida
+  leyendaRevisionActivada = false;
   miNombre = nombre;
   miRol = 'jugador_1';
   miSala = salaId;
@@ -766,7 +766,6 @@ async function registrarIntento(rol, digitos) {
       cambios.estado = 'terminado';
       cambios.ganador = 'jugador_1';
     } else if (esLegendario) {
-      // en legendario, quien acierta gana, misma lógica de ronda
       if (rol === 'jugador_1') {
         const rondaActual = sala.ronda || 1;
         const intentosOp = obtenerIntentos(sala, 'jugador_2').length;
@@ -801,7 +800,11 @@ async function registrarIntento(rol, digitos) {
       cambios.estado = 'terminado';
       cambios.ganador = 'jugador_2';
     }
-  } else if (esEntrenamiento || esLegendario) {
+  } else if (esEntrenamiento) {
+    // En entrenamiento, el turno siempre es del jugador
+    cambios.turno = 'jugador_1';
+    cambios.estado = 'jugando';
+  } else if (esLegendario) {
     cambios.turno = obtenerRolOponente(rol);
     cambios.ronda = rol === 'jugador_2' ? (sala.ronda || 1) + 1 : (sala.ronda || 1);
     cambios.estado = 'jugando';
@@ -824,9 +827,16 @@ async function registrarIntento(rol, digitos) {
 }
 
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
-  if (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol) {
+  const entrenamiento = esModoEntrenamiento();
+  // En entrenamiento no se verifica el turno, siempre puede tirar
+  if (!entrenamiento && (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol)) {
     return mostrarError('error-intento', 'No es tu turno.');
   }
+  if (entrenamiento && (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance'))) {
+    // Solo verifica el estado, no el turno
+    return mostrarError('error-intento', 'El entrenamiento ya terminó.');
+  }
+
   const digitos = obtenerDigitosDeInputs('intento-inputs');
   const error = validarDigitosUnicos(digitos);
   if (error) return mostrarError('error-intento', error);
@@ -976,7 +986,6 @@ function renderizarJuego() {
   btnVerResultado.classList.toggle('oculto', estado !== 'terminado');
   renderizarDescartes();
 
-  // En Legendario, el panel oponente se oculta salvo que la partida esté terminada y se haya activado la revisión
   const ocultarPanelLegendario = legendario && !(estado === 'terminado' && leyendaRevisionActivada);
   juegoLayoutContainer.classList.toggle('entrenamiento', entrenamiento);
   juegoLayoutContainer.classList.toggle('legendario', ocultarPanelLegendario);
@@ -1026,7 +1035,6 @@ function renderizarJuego() {
 
   const listaOponente = document.getElementById('lista-oponente');
   listaOponente.innerHTML = '';
-  // Mostrar intentos del oponente SOLO si no es entrenamiento y (no es legendario o se activó la revisión)
   if (!entrenamiento && !(legendario && !(estado === 'terminado' && leyendaRevisionActivada))) {
     obtenerIntentos(datosSala, oponenteRol).forEach((int, idx) => {
       const fila = document.createElement('div');
@@ -1135,10 +1143,9 @@ function mostrarResultadoFinal(forzar = false) {
   document.getElementById('btn-ver-partida').onclick = () => {
     revisandoPartidaTerminada = true;
     overlay.classList.add('oculto');
-    // Activar revisión en Legendario para que se muestre el panel del oponente
     if (esModoLegendario()) {
       leyendaRevisionActivada = true;
-      renderizarJuego();   // ahora se verán los intentos del oponente
+      renderizarJuego();
     }
     btnVerResultado.focus();
   };
@@ -1164,8 +1171,7 @@ function mostrarResultadoFinal(forzar = false) {
     }
 
     if (legendario) {
-      leyendaRevisionActivada = false;   // nueva partida
-      // Revancha legendario local
+      leyendaRevisionActivada = false;
       if (esPartidaLocal()) {
         const nuevoSecreto = generarNumeroSecreto();
         datosSala.estado = 'jugando';
@@ -1181,7 +1187,6 @@ function mostrarResultadoFinal(forzar = false) {
         manejarCambioEstado();
         return;
       } else {
-        // Revancha legendario online
         const firebase = await cargarFirebase().catch(() => null);
         if (!firebase) return mostrarError('error-intento', 'Necesitás conexión para pedir revancha online.');
         const { ref, update } = firebase;
@@ -1299,7 +1304,7 @@ function resetearApp() {
   botTurnoEnProceso = false;
   ultimoTurnoBot = null;
   revisandoPartidaTerminada = false;
-  leyendaRevisionActivada = false;   // reseteamos
+  leyendaRevisionActivada = false;
   limpiarDescartesActuales();
   datosSala = null;
   miSala = null;
