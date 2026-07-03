@@ -739,7 +739,12 @@ async function registrarIntento(rol, digitos) {
   const estado = sala.estado;
   const esEntrenamiento = esModoEntrenamiento(sala);
   const esLegendario = esModoLegendario(sala);
-  if (!esEntrenamiento && !esLegendario && (estado !== 'jugando' && estado !== 'ultima_chance') || sala.turno !== rol) return false;
+
+  // Validación clara de estado y turno
+  if (!esEntrenamiento && !esLegendario) {
+    if (estado !== 'jugando' && estado !== 'ultima_chance') return false;
+    if (sala.turno !== rol) return false;
+  }
 
   let secretoObjetivo = null;
   if (esLegendario) {
@@ -801,7 +806,6 @@ async function registrarIntento(rol, digitos) {
       cambios.ganador = 'jugador_2';
     }
   } else if (esEntrenamiento) {
-    // En entrenamiento, el turno siempre es del jugador
     cambios.turno = 'jugador_1';
     cambios.estado = 'jugando';
   } else if (esLegendario) {
@@ -828,12 +832,10 @@ async function registrarIntento(rol, digitos) {
 
 document.getElementById('btn-enviar-intento').addEventListener('click', async () => {
   const entrenamiento = esModoEntrenamiento();
-  // En entrenamiento no se verifica el turno, siempre puede tirar
   if (!entrenamiento && (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance') || datosSala.turno !== miRol)) {
     return mostrarError('error-intento', 'No es tu turno.');
   }
   if (entrenamiento && (!datosSala || (datosSala.estado !== 'jugando' && datosSala.estado !== 'ultima_chance'))) {
-    // Solo verifica el estado, no el turno
     return mostrarError('error-intento', 'El entrenamiento ya terminó.');
   }
 
@@ -972,6 +974,20 @@ function manejarCambioEstado() {
   }
 }
 
+// ===== NUEVA: Función para formatear número con candidatos =====
+function formatearNumeroConCandidatos(numeroStr) {
+  const descartes = cargarDescartes();
+  let resultado = '';
+  for (const digito of numeroStr) {
+    const estado = descartes[digito] || 0;
+    let clase = '';
+    if (estado === 1) clase = 'digito-marcado';
+    else if (estado === 2) clase = 'digito-tachado';
+    resultado += `<span class="${clase}">${digito}</span>`;
+  }
+  return resultado;
+}
+
 function renderizarJuego() {
   const oponenteRol = obtenerRolOponente(miRol);
   const oponenteData = datosSala[oponenteRol];
@@ -1029,7 +1045,7 @@ function renderizarJuego() {
   obtenerIntentos(datosSala, miRol).forEach((int, idx) => {
     const fila = document.createElement('div');
     fila.className = 'historial-fila';
-    fila.innerHTML = `<span>${idx + 1}</span><span>${int.numero}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
+    fila.innerHTML = `<span>${idx + 1}</span><span>${formatearNumeroConCandidatos(int.numero)}</span><span class="b">${int.buenos}</span><span class="r">${int.regulares}</span>`;
     listaPropia.appendChild(fila);
   });
 
@@ -1275,7 +1291,7 @@ descartesDigitos.addEventListener('click', (e) => {
   const actual = descartes[digito] || 0;
   descartes[digito] = (actual + 1) % 3;
   guardarDescartes(descartes);
-  renderizarDescartes();
+  if (datosSala) renderizarJuego();
 });
 
 // Navegación entre inputs de dígitos

@@ -223,6 +223,20 @@ select option { background: #14142b; color: #fff; }
 .historial-fila.nueva { animation: highlightIn 0.6s ease; }
 @keyframes highlightIn { from { background: rgba(0,229,255,0.2); } to { background: transparent; } }
 
+/* ===== Estilos para dígitos según candidatos ===== */
+.historial-fila .digito-marcado {
+  color: #000;
+  background: rgba(0,229,255,0.35);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: bold;
+}
+.historial-fila .digito-tachado {
+  text-decoration: line-through;
+  opacity: 0.55;
+  color: var(--texto-tenue);
+}
+
 #lista-propia, #lista-oponente { max-height: 200px; overflow-y: auto; }
 
 /* ===== Descartes ===== */
