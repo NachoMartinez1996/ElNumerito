@@ -740,8 +740,8 @@ async function registrarIntento(rol, digitos) {
   const esEntrenamiento = esModoEntrenamiento(sala);
   const esLegendario = esModoLegendario(sala);
 
-  // Validación clara de estado y turno
-  if (!esEntrenamiento && !esLegendario) {
+  // Validación de estado y turno (excepto en Entrenamiento)
+  if (!esEntrenamiento) {
     if (estado !== 'jugando' && estado !== 'ultima_chance') return false;
     if (sala.turno !== rol) return false;
   }
